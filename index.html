@@ -1,0 +1,482 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Info, RefreshCcw, Download, HelpCircle } from "lucide-react";
+import { motion } from "framer-motion";
+
+/**
+ * IMD 2025 – Re‑weightable Domain Map
+ *
+ * What this component does
+ * - Loads an LSOA/MSOA GeoJSON (`/data/areas.geojson`) with properties {AREACD, AREANM}
+ * - Loads File 9–style transformed domain scores (`/data/file9.json`) keyed by AREACD
+ * - Lets users re‑weight the 7 IMD domains with sliders (weights are normalized to sum to 1)
+ * - Recomputes a bespoke composite score, rank (1 = most deprived), and deciles on the fly
+ * - Choropleths the map by bespoke deciles; provides hover + click details incl. before/after rank
+ * - Exports CSV/GeoJSON of the bespoke composite + deciles + chosen weights
+ *
+ * Assumptions about data (you can adapt in one place: `DOMAIN_KEYS` and `File9Row`)
+ * - `/data/file9.json` is an array of rows like: { AREACD: "E01000001", dom_income: 12.34, dom_employment: 10.2, dom_education: 8.9, dom_health: 9.1, dom_crime: 6.3, dom_barriers: 5.7, dom_living: 7.0 }
+ *   Values are the official **transformed domain scores** for IMD 2025. Higher = more deprived.
+ * - `/data/areas.geojson` features have `properties.AREACD` that matches File 9, and `AREANM` for labels.
+ * - Default (official) weights are provided via `DEFAULT_WEIGHTS` (edit once to match DLUHC guidance).
+ */
+
+// ---- Domain setup -----------------------------------------------------------
+const DOMAIN_KEYS = [
+  { key: "dom_income", label: "Income" },
+  { key: "dom_employment", label: "Employment" },
+  { key: "dom_education", label: "Education" },
+  { key: "dom_health", label: "Health" },
+  { key: "dom_crime", label: "Crime" },
+  { key: "dom_barriers", label: "Barriers to Housing & Services" },
+  { key: "dom_living", label: "Living Environment" },
+] as const;
+
+type DomainKey = typeof DOMAIN_KEYS[number]["key"];
+
+type File9Row = {
+  AREACD: string;
+  [k in DomainKey]: number;
+};
+
+// TODO: Replace these placeholder defaults with the official 2025 weights you use internally.
+// They will be normalized in the UI regardless of the absolute units here.
+const DEFAULT_WEIGHTS: Record<DomainKey, number> = {
+  dom_income: 22.5,
+  dom_employment: 22.5,
+  dom_education: 13.5,
+  dom_health: 13.5,
+  dom_crime: 9.3,
+  dom_barriers: 9.3,
+  dom_living: 9.3,
+};
+
+// Brand palette (New Horizon Economics: navy/cream/gold-ish). Adjust as desired.
+const PALETTE = [
+  "#0b1b2b",
+  "#12324c",
+  "#1b4a71",
+  "#246198",
+  "#2e78bf",
+  "#5a94cf",
+  "#86b0df",
+  "#b3ceee",
+  "#d8e5f7",
+  "#fff4d6", // light accent for least deprived decile
+];
+
+const DECILE_BREAKS = 10; // fixed at deciles for now
+
+// ---- Utility functions ------------------------------------------------------
+function normalizeWeights(w: Record<DomainKey, number>): Record<DomainKey, number> {
+  const sum = DOMAIN_KEYS.reduce((acc, d) => acc + (w[d.key] || 0), 0);
+  if (!sum) return { ...DEFAULT_WEIGHTS } as Record<DomainKey, number>;
+  const out = {} as Record<DomainKey, number>;
+  DOMAIN_KEYS.forEach((d) => {
+    out[d.key] = (w[d.key] || 0) / sum;
+  });
+  return out;
+}
+
+function weightedScore(row: File9Row, normW: Record<DomainKey, number>) {
+  let s = 0;
+  DOMAIN_KEYS.forEach(({ key }) => (s += row[key] * normW[key]));
+  return s; // higher should indicate more deprivation if File 9 scores are used
+}
+
+function rankAndDeciles(values: number[]) {
+  // Rank 1 = most deprived (highest score). Deciles 1=most deprived
+  const idx = values.map((v, i) => ({ i, v }));
+  idx.sort((a, b) => b.v - a.v); // desc
+  const ranks = new Array(values.length).fill(0);
+  idx.forEach((o, pos) => (ranks[o.i] = pos + 1));
+
+  const n = values.length;
+  const deciles = new Array(values.length).fill(0);
+  idx.forEach((o, pos) => {
+    const dec = Math.min(
+      DECILE_BREAKS,
+      Math.max(1, Math.ceil(((pos + 1) / n) * DECILE_BREAKS))
+    );
+    deciles[o.i] = dec;
+  });
+
+  return { ranks, deciles };
+}
+
+function toCSV(rows: any[]): string {
+  if (!rows.length) return "";
+  const cols = Object.keys(rows[0]);
+  const escape = (s: any) =>
+    `"${String(s).replaceAll("\"", '""')}"`;
+  const header = cols.map(escape).join(",");
+  const body = rows.map((r) => cols.map((c) => escape(r[c])).join(",")).join("\n");
+  return header + "\n" + body;
+}
+
+// ---- Main component ---------------------------------------------------------
+export default function IMDReweightableMap() {
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const [areas, setAreas] = useState<any | null>(null); // GeoJSON FeatureCollection
+  const [file9, setFile9] = useState<File9Row[] | null>(null);
+  const [weights, setWeights] = useState<Record<DomainKey, number>>({ ...DEFAULT_WEIGHTS });
+  const [showLabels, setShowLabels] = useState(true);
+  const [preset, setPreset] = useState<string>("official");
+  const [selected, setSelected] = useState<string | null>(null); // AREACD
+
+  // Load data
+  useEffect(() => {
+    (async () => {
+      const gj = await fetch("/data/areas.geojson").then((r) => r.json());
+      const f9 = await fetch("/data/file9.json").then((r) => r.json());
+      setAreas(gj);
+      setFile9(f9);
+    })();
+  }, []);
+
+  // Build a lookup for domain rows
+  const f9ByCode = useMemo(() => {
+    const m = new Map<string, File9Row>();
+    (file9 || []).forEach((r) => m.set(r.AREACD, r));
+    return m;
+  }, [file9]);
+
+  // Baseline (official) for before/after comparison
+  const baseline = useMemo(() => {
+    if (!file9) return null;
+    const normW = normalizeWeights(DEFAULT_WEIGHTS);
+    const scores = file9.map((r) => weightedScore(r, normW));
+    const { ranks, deciles } = rankAndDeciles(scores);
+    return { scores, ranks, deciles };
+  }, [file9]);
+
+  // Current bespoke computation
+  const bespoke = useMemo(() => {
+    if (!file9) return null;
+    const normW = normalizeWeights(weights);
+    const scores = file9.map((r) => weightedScore(r, normW));
+    const { ranks, deciles } = rankAndDeciles(scores);
+    return { scores, ranks, deciles, normW };
+  }, [file9, weights]);
+
+  // Join bespoke values back to GeoJSON features
+  const choropleth = useMemo(() => {
+    if (!areas || !file9 || !bespoke) return null;
+    const codeToIdx = new Map<string, number>();
+    file9.forEach((r, i) => codeToIdx.set(r.AREACD, i));
+
+    const features = areas.features.map((ft: any) => {
+      const cd = ft.properties?.AREACD;
+      const i = codeToIdx.get(cd);
+      const score = i != null ? bespoke.scores[i] : null;
+      const rank = i != null ? bespoke.ranks[i] : null;
+      const dec = i != null ? bespoke.deciles[i] : null;
+      const baseRank = i != null && baseline ? baseline.ranks[i] : null;
+      return {
+        ...ft,
+        properties: {
+          ...ft.properties,
+          _score: score,
+          _rank: rank,
+          _decile: dec,
+          _baseRank: baseRank,
+        },
+      };
+    });
+
+    return { type: "FeatureCollection", features } as any;
+  }, [areas, file9, bespoke, baseline]);
+
+  // Map setup & rendering
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+      center: [-2.5, 53.9], // England-ish
+      zoom: 5.4,
+      pitch: 0,
+      attributionControl: true,
+    });
+
+    mapRef.current = map;
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+
+    map.on("load", () => {
+      // sources & layers will be added when `choropleth` becomes available
+    });
+
+    return () => map.remove();
+  }, []);
+
+  // Add / update data layer
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !choropleth) return;
+
+    const srcId = "areas-src";
+    const layerId = "areas-fill";
+    const lineId = "areas-line";
+
+    // Add or update source
+    if (map.getSource(srcId)) {
+      (map.getSource(srcId) as any).setData(choropleth);
+    } else {
+      map.addSource(srcId, { type: "geojson", data: choropleth });
+
+      map.addLayer({
+        id: layerId,
+        type: "fill",
+        source: srcId,
+        paint: {
+          "fill-color": [
+            "case",
+            ["!has", "_decile"],
+            "#cccccc",
+            [
+              "match",
+              ["get", "_decile"],
+              1, PALETTE[0],
+              2, PALETTE[1],
+              3, PALETTE[2],
+              4, PALETTE[3],
+              5, PALETTE[4],
+              6, PALETTE[5],
+              7, PALETTE[6],
+              8, PALETTE[7],
+              9, PALETTE[8],
+              10, PALETTE[9],
+              "#cccccc",
+            ],
+          ],
+          "fill-opacity": 0.9,
+        },
+      });
+
+      map.addLayer({
+        id: lineId,
+        type: "line",
+        source: srcId,
+        paint: {
+          "line-color": "#ffffff",
+          "line-width": 0.2,
+          "line-opacity": 0.6,
+        },
+      });
+
+      // Interactivity
+      map.on("mousemove", layerId, (e: any) => {
+        if (!e.features?.length) return;
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", layerId, () => {
+        map.getCanvas().style.cursor = "";
+      });
+      map.on("click", layerId, (e: any) => {
+        const f = e.features?.[0];
+        const cd = f?.properties?.AREACD;
+        if (cd) setSelected(cd);
+      });
+    }
+  }, [choropleth]);
+
+  // Tooltip / side panel data for selection
+  const selectedDetail = useMemo(() => {
+    if (!selected || !f9ByCode || !bespoke) return null;
+    const row = f9ByCode.get(selected);
+    if (!row) return null;
+    const i = (file9 || []).findIndex((r) => r.AREACD === selected);
+    const rank = bespoke.ranks[i];
+    const dec = bespoke.deciles[i];
+    const score = bespoke.scores[i];
+    const baseRank = baseline ? baseline.ranks[i] : null;
+    const delta = baseRank ? rank - baseRank : null; // positive = worse vs baseline
+    return { row, rank, dec, score, baseRank, delta };
+  }, [selected, f9ByCode, file9, bespoke, baseline]);
+
+  // Export bespoke results
+  function handleExportCSV() {
+    if (!file9 || !bespoke) return;
+    const rows = file9.map((r, i) => ({
+      AREACD: r.AREACD,
+      score: bespoke.scores[i],
+      rank: bespoke.ranks[i],
+      decile: bespoke.deciles[i],
+      ...DOMAIN_KEYS.reduce((acc, d) => ({ ...acc, [d.key]: r[d.key] }), {} as any),
+    }));
+    const csv = toCSV(rows);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `imd_bespoke_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleExportGeoJSON() {
+    if (!choropleth) return;
+    const payload = JSON.stringify(choropleth);
+    const blob = new Blob([payload], { type: "application/geo+json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `imd_bespoke_${new Date().toISOString().slice(0,10)}.geojson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Presets (extend as needed)
+  const presets: Record<string, { name: string; weights: Record<DomainKey, number> }> = {
+    official: { name: "Official IMD (default)", weights: DEFAULT_WEIGHTS },
+    healthLed: {
+      name: "Health‑led",
+      weights: { ...DEFAULT_WEIGHTS, dom_health: DEFAULT_WEIGHTS.dom_health * 1.8 },
+    },
+    housingLed: {
+      name: "Housing/Access‑led",
+      weights: { ...DEFAULT_WEIGHTS, dom_barriers: DEFAULT_WEIGHTS.dom_barriers * 1.8 },
+    },
+    crimeLight: {
+      name: "Crime‑light",
+      weights: { ...DEFAULT_WEIGHTS, dom_crime: DEFAULT_WEIGHTS.dom_crime * 0.5 },
+    },
+  };
+
+  // Sum of current weights (pre‑normalization) to show UI %
+  const weightSum = DOMAIN_KEYS.reduce((acc, d) => acc + (weights[d.key] || 0), 0);
+  const normW = normalizeWeights(weights);
+
+  return (
+    <div className="w-full h-[calc(100vh-2rem)] grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 bg-[#0b1b2b] text-white">
+      <Card className="lg:col-span-3 bg-[#0f2236] text-white border-0 shadow-xl">
+        <CardHeader>
+          <CardTitle className="text-xl">IMD 2025 – Bespoke Composite</CardTitle>
+          <p className="text-sm opacity-80 flex items-center gap-2"><Info size={16}/> Adjust domain weights to rebuild a custom composite. Higher score/rank = more deprived.</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm opacity-90">Preset</label>
+            <Select value={preset} onValueChange={(v) => {
+              setPreset(v);
+              setWeights(presets[v].weights);
+            }}>
+              <SelectTrigger className="bg-[#102a44] border-0 text-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#102a44] text-white border-0">
+                {Object.entries(presets).map(([k, p]) => (
+                  <SelectItem key={k} value={k}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4">
+            {DOMAIN_KEYS.map(({ key, label }) => (
+              <div key={key} className="p-3 rounded-2xl bg-[#102a44]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium">{label}</span>
+                  <span className="text-xs opacity-75">{(normW[key] * 100).toFixed(1)}%</span>
+                </div>
+                <Slider
+                  value={[weights[key]]}
+                  min={0}
+                  max={40}
+                  step={0.1}
+                  onValueChange={(vals) => setWeights((w) => ({ ...w, [key]: vals[0] }))}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between text-xs opacity-80">
+            <span>Weight total (pre‑normalise)</span>
+            <span>{weightSum.toFixed(1)}</span>
+          </div>
+
+          <div className="flex gap-2">
+            <Button variant="secondary" className="bg-[#1b4a71] text-white hover:bg-[#246198]" onClick={() => setWeights({ ...DEFAULT_WEIGHTS })}>
+              <RefreshCcw className="mr-2 h-4 w-4"/> Reset to default
+            </Button>
+            <Button variant="outline" className="border-[#b3ceee] text-[#b3ceee] hover:bg-[#12324c]" onClick={handleExportCSV}>
+              <Download className="mr-2 h-4 w-4"/> CSV
+            </Button>
+            <Button variant="outline" className="border-[#b3ceee] text-[#b3ceee] hover:bg-[#12324c]" onClick={handleExportGeoJSON}>
+              <Download className="mr-2 h-4 w-4"/> GeoJSON
+            </Button>
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t border-white/10">
+            <label className="text-sm opacity-90 flex items-center gap-2"><HelpCircle size={14}/> Labels</label>
+            <Switch checked={showLabels} onCheckedChange={setShowLabels} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="lg:col-span-9 relative rounded-2xl overflow-hidden shadow-2xl">
+        <div ref={mapContainerRef} className="w-full h-full" />
+
+        {/* Legend */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          className="absolute bottom-4 left-4 bg-white/90 text-black rounded-xl p-3 shadow-xl">
+          <div className="text-xs font-semibold mb-2">Deciles (1 = most deprived)</div>
+          <div className="flex items-center gap-1">
+            {PALETTE.map((c, i) => (
+              <div key={i} className="w-6 h-3 rounded" style={{ background: c }} />
+            ))}
+          </div>
+          <div className="flex justify-between text-[10px] mt-1">
+            <span>1</span><span>10</span>
+          </div>
+        </motion.div>
+
+        {/* Selection panel */}
+        {selectedDetail && (
+          <motion.div initial={{ x: 400, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
+            className="absolute top-4 right-4 w-80 bg-white text-black rounded-2xl shadow-2xl overflow-hidden">
+            <div className="p-4 border-b">
+              <div className="text-sm font-semibold">{selected}</div>
+              <div className="text-xs opacity-70">Custom composite vs baseline</div>
+            </div>
+            <div className="p-4 space-y-2 text-sm">
+              <div className="flex justify-between"><span>Rank (1=most dep.)</span><span>{selectedDetail.rank}</span></div>
+              <div className="flex justify-between"><span>Decile</span><span>{selectedDetail.dec}</span></div>
+              {selectedDetail.baseRank && (
+                <div className="flex justify-between"><span>Baseline rank</span><span>{selectedDetail.baseRank}</span></div>
+              )}
+              {selectedDetail.delta !== null && (
+                <div className="flex justify-between"><span>Δ rank vs baseline</span><span>{selectedDetail.delta! > 0 ? `+${selectedDetail.delta}` : selectedDetail.delta}</span></div>
+              )}
+
+              <div className="pt-2 mt-2 border-t">
+                <div className="text-xs font-semibold mb-1">Domain contributions</div>
+                {DOMAIN_KEYS.map(({ key, label }) => (
+                  <div key={key} className="flex justify-between text-xs">
+                    <span>{label}</span>
+                    <span>
+                      {(selectedDetail.row[key]).toFixed(2)} × {(normW[key] * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="p-3 bg-black/5 text-[10px]">
+              Not the official IMD. Computed from 2025 transformed domain scores (File 9) with user‑defined weights, normalized to sum to 1.
+            </div>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  );
+}
