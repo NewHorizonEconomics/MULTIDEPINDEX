@@ -94,18 +94,28 @@
     dom_health:/health/i, dom_crime:/crime/i, dom_barriers:/(barrier|housing|access)/i,
     dom_living:/(living|environment)/i
   };
+// --- Schema is explicit based on your files ---
+const GEO_CODE_KEY = "AREACD"; // in areas.geojson
+const GEO_NAME_KEY = "AREANM"; // in areas.geojson
+
+// File9 mapping (no guessing)
+const dkMap = {
+  dom_income: "income",
+  dom_employment: "employ",
+  dom_education: "educ",
+  dom_health: "health",
+  dom_crime: "crime",
+  dom_barriers: "barrier",
+  dom_living: "living",
+};
+const codeCol = "AREACD"; // in file9.csv
+
+// Red → white → green (1=red, 5=white, 10=green)
 const PALETTE = [
-  "#d73027", // 1 (most deprived) red
-  "#f46d43",
-  "#fdae61",
-  "#fee08b",
-  "#ffffff", // 5 white
-  "#e6f5d0",
-  "#a1d76a",
-  "#66bd63",
-  "#1a9850",
-  "#006837"  // 10 (least deprived) green
+  "#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffff",
+  "#e6f5d0", "#a1d76a", "#66bd63", "#1a9850", "#006837"
 ];
+
 
   const NO_DATA_FILL = "#3a4258";
 
@@ -209,36 +219,33 @@ const PALETTE = [
 
     renderSliders(); updateLegend();
 
-    try{
-      // load geojson
-      const g = await fetch(GEO_URL, {cache:'no-store'});
-      if(!g.ok) throw new Error('Geo fetch failed: '+g.status);
-      const raw = await g.json();
-      areasFC = looksLike27700(raw) ? reproject27700toWGS84(raw) : raw;
+     try {
+    // ---- load geojson
+    const g = await fetch(GEO_URL, {cache:'no-store'});
+    if (!g.ok) throw new Error('Geo fetch failed: '+g.status);
+    const raw = await g.json();
+    areasFC = looksLike27700(raw) ? reproject27700toWGS84(raw) : raw;
 
-      // load file9
-      const res = await fetch(CSV_URL, {cache:'no-store'});
-      if(!res.ok) throw new Error('CSV fetch failed: '+res.status);
-      const txt = await res.text();
-      const parsed = Papa.parse(txt, {header:true, dynamicTyping:false, skipEmptyLines:true});
-      file9 = parsed.data || [];
-      if(!file9.length) throw new Error('File9 has 0 rows');
-   
-dkMap = {
-  dom_income: "income",
-  dom_employment: "employ",
-  dom_education: "educ",
-  dom_health: "health",
-  dom_crime: "crime",
-  dom_barriers: "barrier",
-  dom_living: "living",
-};
+    // ---- load file9 (auto-detect delimiter CSV/TSV)
+    const res = await fetch(CSV_URL, {cache:'no-store'});
+    if (!res.ok) throw new Error('CSV fetch failed: '+res.status);
+    const txt = await res.text();
+    const guessTab = txt.split('\n',1)[0].includes('\t');
+    const parsed = Papa.parse(txt, {
+      header: true, dynamicTyping: false, skipEmptyLines: true,
+      delimiter: guessTab ? '\t' : ','
+    });
+    file9 = parsed.data || [];
+    if (!file9.length) throw new Error('File9 has 0 rows');
 
-      // join columns (no guessing)
-codeCol = "AREACD";        // in file9.csv
-const GEO_CODE_KEY = "AREACD"; // in areas.geojson
-const GEO_NAME_KEY = "AREANM"; // for tooltip title
+    draw();
+    updateAll();  // <- coloring happens here
 
+  } catch (err) {
+    console.error(err);
+    alert('Failed to load map/data. See console.');
+  }
+});
 
   function draw(){
     if(layer) { map.removeLayer(layer); layer=null; }
@@ -278,6 +285,59 @@ l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
     updateLegend();
     // console.log(`Matched ${matched}/${total}`);
   }
+
+ // =====================================================
+//  updateAll() — joins File9 to the map and colours areas
+// =====================================================
+function updateAll() {
+  // --- weights are fixed (you can skip this if not reweighting) ---
+  const normW = normalizeWeights(DEFAULT_WEIGHTS); // or your weights logic
+
+  // --- compute composite score and decile per row ---
+  const scores = file9.map(r => {
+    return (
+      Number(r.income)   * normW.dom_income +
+      Number(r.employ)   * normW.dom_employment +
+      Number(r.educ)     * normW.dom_education +
+      Number(r.health)   * normW.dom_health +
+      Number(r.crime)    * normW.dom_crime +
+      Number(r.barrier)  * normW.dom_barriers +
+      Number(r.living)   * normW.dom_living
+    );
+  });
+
+  const { ranks, deciles } = rankAndDeciles(scores);
+
+  // --- build index for quick lookup ---
+  const idx = new Map();
+  file9.forEach((r,i)=>{
+    const raw = r.AREACD;
+    if(raw!=null) idx.set(String(raw).toUpperCase().trim(), i);
+  });
+
+  // --- colour each polygon ---
+  let matched=0,total=0;
+  layer.eachLayer(l=>{
+    total++;
+    const props = l.feature?.properties || {};
+    const code = String(props.AREACD ?? "").toUpperCase().trim();
+    const i = idx.get(code);
+    const dec = (i!=null) ? deciles[i] : NaN;
+
+    const fill = colorFor(dec);
+    l._currentFill = fill;
+    l.setStyle({ fillColor: fill });
+
+    const name = props.AREANM || code || "Area";
+    const content = `<div><strong>${name}</strong><br/><span style="opacity:.75">${code}</span><br/>Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong></div>`;
+    l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
+
+    if(Number.isFinite(dec)) matched++;
+  });
+
+  console.log(`[JOIN] matched ${matched} of ${total} features`);
+  updateLegend();
+}
 
   function exportCSV(){
     if(!file9) return;
