@@ -99,7 +99,8 @@ const GEO_CODE_KEY = "AREACD"; // in areas.geojson
 const GEO_NAME_KEY = "AREANM"; // in areas.geojson
 
 // File9 mapping (no guessing)
-const dkMap = {
+// File9 mapping (fixed to your headers)
+const DK_MAP = {
   dom_income: "income",
   dom_employment: "employ",
   dom_education: "educ",
@@ -108,7 +109,10 @@ const dkMap = {
   dom_barriers: "barrier",
   dom_living: "living",
 };
-const codeCol = "AREACD"; // in file9.csv
+const codeCol = "AREACD";          // in file9.csv
+const GEO_CODE_KEY = "AREACD";     // in areas.geojson
+const GEO_NAME_KEY = "AREANM";     // in areas.geojson
+
 
 // Red → white → green (1=red, 5=white, 10=green)
 const PALETTE = [
@@ -120,7 +124,8 @@ const PALETTE = [
   const NO_DATA_FILL = "#3a4258";
 
   // --- State
-  let map, layer, areasFC=null, file9=[], dkMap=null, codeCol=null;
+ let map, layer, areasFC=null, file9=[], codeCol=null;
+
   const weights = {...DEFAULT_WEIGHTS};
   let legendVisible = JSON.parse(localStorage.getItem('legendVisible') ?? 'true');
 
@@ -148,21 +153,13 @@ const PALETTE = [
     for (const f of out.features){ if (f.geometry?.coordinates){ f.geometry.coordinates = rp(f.geometry.coordinates); } }
     return out;
   }
-  function buildDomainKeyMap(sample){
-    const m={}; const keys=Object.keys(sample||{});
-    for (const [dk,rx] of Object.entries(DOMAIN_ALIASES)){
-      const hit = keys.find(k=>rx.test(k));
-      if (!hit) throw new Error('Missing File9 column for '+dk);
-      m[dk]=hit;
-    }
-    return m;
-  }
+
   function normalizeWeights(w){
     const s = Object.values(w).reduce((a,b)=>a+(b||0),0) || 1;
     const o={}; for (const k in w) o[k]= (w[k]||0)/s; return o;
   }
-  function weightedScore(row,normW,dkMap){
-    let s=0; for (const k in dkMap){ s += Number(row[dkMap[k]]) * (normW[k]||0); } return s;
+  function weightedScore(row,normW,DK_MAP){
+    let s=0; for (const k in DK_MAP){ s += Number(row[DK_MAP[k]]) * (normW[k]||0); } return s;
   }
   function rankAndDeciles(vals){
     const idx = vals.map((v,i)=>({i,v})).sort((a,b)=>b.v-a.v);
@@ -294,16 +291,16 @@ function updateAll() {
   const normW = normalizeWeights(DEFAULT_WEIGHTS); // or your weights logic
 
   // --- compute composite score and decile per row ---
-  const scores = file9.map(r => {
-    return (
-      Number(r.income)   * normW.dom_income +
-      Number(r.employ)   * normW.dom_employment +
-      Number(r.educ)     * normW.dom_education +
-      Number(r.health)   * normW.dom_health +
-      Number(r.crime)    * normW.dom_crime +
-      Number(r.barrier)  * normW.dom_barriers +
-      Number(r.living)   * normW.dom_living
-    );
+ const scores = file9.map(r =>
+  Number(r[DK_MAP.dom_income])     * normW.dom_income +
+  Number(r[DK_MAP.dom_employment]) * normW.dom_employment +
+  Number(r[DK_MAP.dom_education])  * normW.dom_education +
+  Number(r[DK_MAP.dom_health])     * normW.dom_health +
+  Number(r[DK_MAP.dom_crime])      * normW.dom_crime +
+  Number(r[DK_MAP.dom_barriers])   * normW.dom_barriers +
+  Number(r[DK_MAP.dom_living])     * normW.dom_living
+);
+
   });
 
   const { ranks, deciles } = rankAndDeciles(scores);
@@ -342,7 +339,7 @@ function updateAll() {
   function exportCSV(){
     if(!file9) return;
     const normW = normalizeWeights(weights);
-    const scores = file9.map(r=>weightedScore(r,normW,dkMap));
+    const scores = file9.map(r=>weightedScore(r,normW,DK_MAP));
     const {ranks,deciles} = rankAndDeciles(scores);
     const rows=[]; const idx=new Map(); file9.forEach((r,i)=> idx.set(String(r[codeCol]).trim(),i));
     for(const [code,i] of idx.entries()){
@@ -358,7 +355,7 @@ function updateAll() {
   function exportGeo(){
     if(!areasFC||!file9) return;
     const normW = normalizeWeights(weights);
-    const scores = file9.map(r=>weightedScore(r,normW,dkMap));
+    const scores = file9.map(r=>weightedScore(r,normW,DK_MAP));
     const {ranks,deciles} = rankAndDeciles(scores);
     const idx=new Map(); file9.forEach((r,i)=> idx.set(String(r[codeCol]).trim(),i));
     const out = {
