@@ -94,7 +94,19 @@
     dom_health:/health/i, dom_crime:/crime/i, dom_barriers:/(barrier|housing|access)/i,
     dom_living:/(living|environment)/i
   };
-  const PALETTE = ["#0b1b2b","#12324c","#1b4a71","#246198","#2e78bf","#5a94cf","#86b0df","#b3ceee","#d8e5f7","#fff4d6"];
+const PALETTE = [
+  "#d73027", // 1 (most deprived) red
+  "#f46d43",
+  "#fdae61",
+  "#fee08b",
+  "#ffffff", // 5 white
+  "#e6f5d0",
+  "#a1d76a",
+  "#66bd63",
+  "#1a9850",
+  "#006837"  // 10 (least deprived) green
+];
+
   const NO_DATA_FILL = "#3a4258";
 
   // --- State
@@ -211,17 +223,22 @@
       const parsed = Papa.parse(txt, {header:true, dynamicTyping:false, skipEmptyLines:true});
       file9 = parsed.data || [];
       if(!file9.length) throw new Error('File9 has 0 rows');
-      dkMap = buildDomainKeyMap(file9[0]);
-      codeCol = Object.keys(file9[0]).find(k=>/(code|cd|areacd|lsoa|msoa)/i.test(k));
-      if(!codeCol) throw new Error('Cannot detect code column in file9.csv');
+   
+dkMap = {
+  dom_income: "income",
+  dom_employment: "employ",
+  dom_education: "educ",
+  dom_health: "health",
+  dom_crime: "crime",
+  dom_barriers: "barrier",
+  dom_living: "living",
+};
 
-      draw();
-      updateAll();
-    }catch(err){
-      console.error(err);
-      alert('Failed to load map/data. Open the browser console for details.');
-    }
-  });
+      // join columns (no guessing)
+codeCol = "AREACD";        // in file9.csv
+const GEO_CODE_KEY = "AREACD"; // in areas.geojson
+const GEO_NAME_KEY = "AREANM"; // for tooltip title
+
 
   function draw(){
     if(layer) { map.removeLayer(layer); layer=null; }
@@ -238,33 +255,25 @@
     map.fitBounds(layer.getBounds(),{padding:[20,20]});
   }
 
-  function updateAll(){
-    const normW = normalizeWeights(weights);
-    for (const [k] of DOMAIN_KEYS){ if(normLabel[k]) normLabel[k].textContent = (normW[k]*100).toFixed(1)+'%'; }
+  // build CSV index (uppercased & trimmed for safety)
+const idx = new Map();
+file9.forEach((r,i) => {
+  const raw = r[codeCol];
+  if (raw != null) idx.set(String(raw).toUpperCase().trim(), i);
+});
 
-    // compute composite from file9
-    const scores = file9.map(r=>weightedScore(r,normW,dkMap));
-    const {ranks,deciles} = rankAndDeciles(scores);
+// …inside layer.eachLayer(l => { … })
+const props = l.feature?.properties || {};
+const code = String(props[GEO_CODE_KEY] ?? "").toUpperCase().trim();
+const i = idx.get(code);
+const dec = (i != null) ? deciles[i] : NaN;
+const fill = colorFor(dec);
+l._currentFill = fill; l.setStyle({ fillColor: fill });
 
-    // index by code for join
-    const idx = new Map(); file9.forEach((r,i)=> idx.set(String(r[codeCol]).trim(), i));
-
-    let matched=0,total=0;
-    layer.eachLayer(l=>{
-      total++;
-      const props = l.feature?.properties||{};
-      const code = String(props.AREACD ?? props.code ?? l.feature?.id ?? '').trim();
-      const i = idx.get(code);
-      const dec = (i!=null) ? deciles[i] : NaN;
-      const fill = colorFor(dec);
-      l._currentFill = fill; l.setStyle({fillColor:fill});
-
-      const tip = document.createElement('div');
-      tip.innerHTML = `<div><strong>${props.AREANM||code||'Area'}</strong><br/><span style="opacity:.75">${code||''}</span><br/>Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong></div>`;
-      l.bindTooltip(tip,{sticky:true,opacity:0.95,className:'tooltip'});
-
-      if(Number.isFinite(dec)) matched++;
-    });
+// nicer tooltip using AREANM
+const name = props[GEO_NAME_KEY] || code || "Area";
+const content = `<div><strong>${name}</strong><br/><span style="opacity:.75">${code}</span><br/>Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong></div>`;
+l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
 
     updateLegend();
     // console.log(`Matched ${matched}/${total}`);
