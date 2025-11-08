@@ -1,4 +1,4 @@
-AREACD,AREANM,income,employ,educ,health,crime,barrier,living
+LSOA21CD,LSOA21NM,income,employ,educ,health,crime,barrier,living
 E01000001,City of London 001A,0.017,0.032,0.001,0.44,0.039,3.273,89.93
 E01000002,City of London 001B,0.059,0.015,0.057,0.809,0.03,0.763,48.545
 E01000003,City of London 001C,6.652,5.075,2.471,11.04,4.791,2.376,44.308
