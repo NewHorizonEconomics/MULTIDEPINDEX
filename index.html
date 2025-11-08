@@ -76,9 +76,10 @@
 <script defer>
 (function(){
   // --- Config
-  const GEO_URL = '/data/areas.geojson'; // your file (plural)
+  const GEO_URL = '/data/areas.geojson';
   const CSV_URL = '/data/file9.csv';
 
+  // Displayed slider labels
   const DOMAIN_KEYS = [
     ["dom_income","Income"],
     ["dom_employment","Employment"],
@@ -88,91 +89,56 @@
     ["dom_barriers","Barriers to Housing & Services"],
     ["dom_living","Living Environment"],
   ];
-  const DEFAULT_WEIGHTS = { dom_income:22.5, dom_employment:22.5, dom_education:13.5, dom_health:13.5, dom_crime:9.3, dom_barriers:9.3, dom_living:9.3 };
-  const DOMAIN_ALIASES = {
-    dom_income:/income/i, dom_employment:/employ/i, dom_education:/educ/i,
-    dom_health:/health/i, dom_crime:/crime/i, dom_barriers:/(barrier|housing|access)/i,
-    dom_living:/(living|environment)/i
+
+  // CSV column names for File 9 (you said: income, employ, educ, health, crime, barrier, living)
+  const DK_MAP = {
+    dom_income: "income",
+    dom_employment: "employ",
+    dom_education: "educ",
+    dom_health: "health",
+    dom_crime: "crime",
+    dom_barriers: "barrier",
+    dom_living: "living",
   };
-// --- Schema is explicit based on your files ---
 
-// File9 mapping (no guessing)
-// File9 mapping (fixed to your headers)
-const DK_MAP = {
-  dom_income: "income",
-  dom_employment: "employ",
-  dom_education: "educ",
-  dom_health: "health",
-  dom_crime: "crime",
-  dom_barriers: "barrier",
-  dom_living: "living",
-};
-const GEO_CODE_KEY = "LSOA21CD"; // GeoJSON code
-const GEO_NAME_KEY = "LSOA21NM"; // GeoJSON name
-const CODE_COL     = "LSOA21CD"; // CSV code (after you rename the header)
+  const DEFAULT_WEIGHTS = {
+    dom_income:22.5, dom_employment:22.5, dom_education:13.5,
+    dom_health:13.5, dom_crime:9.3, dom_barriers:9.3, dom_living:9.3
+  };
 
+  // GeoJSON property keys
+  const GEO_CODE_KEY = "LSOA21CD";
+  const GEO_NAME_KEY = "LSOA21NM";
+  const CODE_COL     = "LSOA21CD"; // CSV header you renamed
 
-
-// Red → white → green (1=red, 5=white, 10=green)
-const PALETTE = [
-  "#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffff",
-  "#e6f5d0", "#a1d76a", "#66bd63", "#1a9850", "#006837"
-];
-
-
+  // Colours (1=red … 5=white … 10=green)
+  const PALETTE = ["#d73027","#f46d43","#fdae61","#fee08b","#ffffff","#e6f5d0","#a1d76a","#66bd63","#1a9850","#006837"];
   const NO_DATA_FILL = "#3a4258";
 
   // --- State
- let map, layer, areasFC=null, file9=[];
-
+  let map, layer, areasFC = null, file9 = [];
   const weights = {...DEFAULT_WEIGHTS};
   let legendVisible = JSON.parse(localStorage.getItem('legendVisible') ?? 'true');
 
-  // --- Utils
-  const firstXY = (c)=> {
-    if (!c) return null;
-    if (typeof c[0] === 'number') return c;
-    for (const d of c){ const v = firstXY(d); if (v) return v; }
-    return null;
-  };
-  function looksLike27700(gj){
-    try{ const xy = firstXY(gj?.features?.[0]?.geometry?.coordinates)||[];
-      const [x,y]=xy; return Math.abs(x)>180||Math.abs(y)>90; } catch{ return false; }
-  }
+  // --- Helpers
+  const firstXY = (c)=>{ if(!c) return null; if (typeof c[0]==='number') return c; for(const d of c){ const v=firstXY(d); if(v) return v; } return null; };
+  function looksLike27700(gj){ try{ const xy = firstXY(gj?.features?.[0]?.geometry?.coordinates)||[]; const [x,y]=xy; return Math.abs(x)>180||Math.abs(y)>90; }catch{ return false; } }
   const EPSG27700_DEF = '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,125.157,542.06,0.1502,0.2470,0.8421,-20.4894 +units=m +no_defs';
   function reproject27700toWGS84(gj){
     if (!window.proj4) return gj;
     proj4.defs('EPSG:27700', EPSG27700_DEF);
     const fwd = (xy)=> proj4('EPSG:27700','WGS84',xy);
-    function rp(coords){
-      if (typeof coords[0]==='number'){ const [x,y]=coords; const [lon,lat]=fwd([x,y]); return [lon,lat]; }
-      return coords.map(rp);
-    }
+    function rp(coords){ if (typeof coords[0]==='number'){ const [x,y]=coords; const [lon,lat]=fwd([x,y]); return [lon,lat]; } return coords.map(rp); }
     const out = JSON.parse(JSON.stringify(gj));
     for (const f of out.features){ if (f.geometry?.coordinates){ f.geometry.coordinates = rp(f.geometry.coordinates); } }
     return out;
   }
-function refreshWeightLabels(){
-  const norm = normalizeWeights(weights);
-  Object.keys(normLabel).forEach(k => {
-    const el = normLabel[k];
-    if (el) el.textContent = `${(norm[k] * 100).toFixed(1)}%`;
-  });
-}
-
-  function refreshWeightLabels(){
-  const norm = normalizeWeights(weights);
-  DOMAIN_KEYS.forEach(([key])=>{
-    const el = normLabel[key];
-    if (el) el.textContent = `${(norm[key]*100).toFixed(1)}%`;
-  });
-}
 
   function normalizeWeights(w){
     const s = Object.values(w).reduce((a,b)=>a+(b||0),0) || 1;
     const o={}; for (const k in w) o[k]= (w[k]||0)/s; return o;
   }
-  function weightedScore(row,normW,DK_MAP){
+  function weightedScore(row, normW){
     let s=0; for (const k in DK_MAP){ s += Number(row[DK_MAP[k]]) * (normW[k]||0); } return s;
   }
   function rankAndDeciles(vals){
@@ -186,56 +152,54 @@ function refreshWeightLabels(){
     const i = Math.max(1, Math.min(10, dec)) - 1;
     return PALETTE[i];
   }
-// --- Robust coercions (handles commas, spaces, BOM, weird minus signs)
-const cleanStr = v => String(v ?? "")
-  .replace(/^\uFEFF/, "")         // strip BOM
-  .trim();
+  const cleanStr = v => String(v ?? "").replace(/^\uFEFF/, "").trim();
+  const num = v => { const s = cleanStr(v).replace(/[\s,]/g,"").replace(/[−–—]/g,"-"); const x = +s; return Number.isFinite(x) ? x : NaN; };
 
-const num = v => {
-  const s = cleanStr(v).replace(/[\s,]/g, "").replace(/[−–—]/g, "-");
-  const x = +s;
-  return Number.isFinite(x) ? x : NaN;
-};
-
-  // --- UI (sliders & legend)
+  // --- UI pieces
   const slidersDiv = document.getElementById('sliders');
-  const normLabel = {};
-  function renderSliders(){
-  slidersDiv.innerHTML = '';
-  const norm = normalizeWeights(weights);
+  const normLabel = {}; // key -> span element
 
-  DOMAIN_KEYS.forEach(([key, label]) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'row';
-
-    const top = document.createElement('label');
-    const pct = ((norm[key] || 0) * 100).toFixed(1);
-    top.innerHTML = `<span>${label}</span><span id="lab-${key}">${pct}%</span>`;
-
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = '0';
-    input.max = '40';
-    input.step = '0.1';
-    input.value = String(weights[key]);
-
-    input.addEventListener('input', () => {
-      weights[key] = Number(input.value);
-      refreshWeightLabels();  // update the percentage labels
-      updateAll();            // recolour the map
+  function refreshWeightLabels(){
+    const norm = normalizeWeights(weights);
+    Object.keys(normLabel).forEach(k => {
+      const el = normLabel[k];
+      if (el) el.textContent = `${(norm[k] * 100).toFixed(1)}%`;
     });
+  }
 
-    wrap.appendChild(top);
-    wrap.appendChild(input);
-    slidersDiv.appendChild(wrap);
+  function renderSliders(){
+    slidersDiv.innerHTML = '';
+    const norm = normalizeWeights(weights);
 
-    // keep a handle to the label span so we can update it fast
-    normLabel[key] = top.querySelector('span:last-child');
-  });
-}
+    DOMAIN_KEYS.forEach(([key, label]) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'row';
 
+      const top = document.createElement('label');
+      const pct = ((norm[key] || 0) * 100).toFixed(1);
+      top.innerHTML = `<span>${label}</span><span id="lab-${key}">${pct}%</span>`;
 
-  
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = '0';
+      input.max = '40';
+      input.step = '0.1';
+      input.value = String(weights[key]);
+
+      input.addEventListener('input', () => {
+        weights[key] = Number(input.value);
+        refreshWeightLabels();  // update the percentage labels
+        updateAll();            // recolour the map
+      });
+
+      wrap.appendChild(top);
+      wrap.appendChild(input);
+      slidersDiv.appendChild(wrap);
+
+      normLabel[key] = top.querySelector('span:last-child');
+    });
+  }
+
   function updateLegend(){
     const el = document.getElementById('legend');
     let html = `<div style="font-weight:700;margin-bottom:6px">Deciles (1 = most deprived)</div>`;
@@ -245,199 +209,193 @@ const num = v => {
     html += `<div class="row"><span class="swatch" style="background:${NO_DATA_FILL}"></span> No data</div>`;
     el.innerHTML = html;
     el.style.display = legendVisible ? 'block' : 'none';
-    document.getElementById('legendToggle').textContent = legendVisible ? 'Hide legend' : 'Show legend';
+    const btn = document.getElementById('legendToggle');
+    if (btn) btn.textContent = legendVisible ? 'Hide legend' : 'Show legend';
   }
-function draw(){
-  if(layer) { map.removeLayer(layer); layer=null; }
-  layer = L.geoJSON(areasFC, {
-    style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
-    onEachFeature: (f,l)=>{
-      l.on({
-        mouseover:e=>{ e.target.setStyle({weight:2,color:'#fff',fillColor:e.target._currentFill,fillOpacity:1}); },
-        mouseout:e=>{ e.target.setStyle({weight:1.1,color:'#9fb6e6',fillColor:e.target._currentFill,fillOpacity:0.9}); },
-        click:()=> map.fitBounds(l.getBounds(), {maxZoom:11})
-      });
-    }
-  }).addTo(map);
-  map.fitBounds(layer.getBounds(),{padding:[20,20]});
-}
 
-// Joins File9 to the map and colours areas
-function updateAll() {
-  const normW = normalizeWeights(weights); // <-- was DEFAULT_WEIGHTS
-  refreshWeightLabels();                   // keep the sidebar % in sync
-}
-
-  const scores = file9.map(r =>
-    r.income  * normW.dom_income     +
-    r.employ  * normW.dom_employment +
-    r.educ    * normW.dom_education  +
-    r.health  * normW.dom_health     +
-    r.crime   * normW.dom_crime      +
-    r.barrier * normW.dom_barriers   +
-    r.living  * normW.dom_living
-  );
-  const { ranks, deciles } = rankAndDeciles(scores);
-
-  // index by LSOA21CD (already uppercased in normalisation step)
-  const idx = new Map();
-  file9.forEach((r,i)=> idx.set(r.LSOA21CD, i));
-
-  let matched=0,total=0;
-  layer.eachLayer(l=>{
-    total++;
-    const props = l.feature?.properties || {};
-    const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase(); // LSOA21CD from GeoJSON
-const i     = idx.get(code);
-const dec   = (i!=null) ? deciles[i] : NaN;
-const rk    = (i!=null) ? ranks[i]   : NaN;
-const n     = deciles.length;
-
-const fill = colorFor(dec);
-l._currentFill = fill;
-l.setStyle({ fillColor: fill });
-
-const name = props[GEO_NAME_KEY] || code || "Area";
-const content = `
-  <div>
-    <strong>${name}</strong><br/>
-    <span style="opacity:.75">${code}</span><br/>
-    Rank: <strong>${Number.isFinite(rk)?`${rk} / ${n}`:'—'}</strong><br/>
-    Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong>
-  </div>`;
-l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
-
-
-    if(Number.isFinite(dec)) matched++;
-  });
-
-  const nanScores = scores.filter(x => !Number.isFinite(x)).length;
-  console.log(`[JOIN] matched ${matched} of ${total} features | NaN scores: ${nanScores}/${scores.length}`);
-  updateLegend();
-}
-
-function exportCSV(){
-  if(!file9?.length) return;
- const normW = normalizeWeights(weights); // instead of DEFAULT_WEIGHTS
-
-  const scores = file9.map(r=>weightedScore(r,normW,DK_MAP));
-  const {ranks,deciles} = rankAndDeciles(scores);
-
-  // index by LSOA21CD (use cleaned field)
-  const idx=new Map(); file9.forEach((r,i)=> idx.set(r.LSOA21CD,i));
-
-  const rows=[];
-  for(const [code,i] of idx.entries()){
-    rows.push({LSOA21CD:code,score:scores[i],rank:ranks[i],decile:deciles[i]});
+  function draw(){
+    if(layer) { map.removeLayer(layer); layer=null; }
+    layer = L.geoJSON(areasFC, {
+      style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
+      onEachFeature: (f,l)=>{
+        l.on({
+          mouseover:e=>{ e.target.setStyle({weight:2,color:'#fff',fillColor:e.target._currentFill,fillOpacity:1}); },
+          mouseout:e=>{ e.target.setStyle({weight:1.1,color:'#9fb6e6',fillColor:e.target._currentFill,fillOpacity:0.9}); },
+          click:()=> map.fitBounds(l.getBounds(), {maxZoom:11})
+        });
+      }
+    }).addTo(map);
+    map.fitBounds(layer.getBounds(),{padding:[20,20]});
   }
-  const cols=['LSOA21CD','score','rank','decile'];
-  const esc=s=>`"${String(s).replaceAll('"','""')}"`;
-  const csv=[cols.map(esc).join(','), ...rows.map(r=>cols.map(c=>esc(r[c])).join(','))].join('\n');
 
-  const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.csv`; a.click();
-  URL.revokeObjectURL(url);
-}
+  function updateAll(){
+    const normW = normalizeWeights(weights); // use LIVE weights
+    refreshWeightLabels();
 
-function exportGeo(){
-  if(!areasFC||!file9?.length) return;
-  const normW = normalizeWeights(DEFAULT_WEIGHTS);
-  const scores = file9.map(r=>weightedScore(r,normW,DK_MAP));
-  const {ranks,deciles} = rankAndDeciles(scores);
+    const scores = file9.map(r =>
+      r.income  * normW.dom_income     +
+      r.employ  * normW.dom_employment +
+      r.educ    * normW.dom_education  +
+      r.health  * normW.dom_health     +
+      r.crime   * normW.dom_crime      +
+      r.barrier * normW.dom_barriers   +
+      r.living  * normW.dom_living
+    );
+    const { ranks, deciles } = rankAndDeciles(scores);
 
-  const idx=new Map(); file9.forEach((r,i)=> idx.set(r.LSOA21CD,i));
+    const idx = new Map(); // index by LSOA code
+    file9.forEach((r,i)=> idx.set(r.LSOA21CD, i));
 
-  const out = {
-    type:'FeatureCollection',
-    features: areasFC.features.map(ft=>{
-      const code = String(ft.properties?.LSOA21CD ?? ft.id ?? '').trim().toUpperCase();
-      const i = idx.get(code);
-      return {
-        ...ft,
-        properties:{
-          ...ft.properties,
-          _score:  (i!=null? scores[i]   : null),
-          _rank:   (i!=null? ranks[i]    : null),
-          _decile: (i!=null? deciles[i]  : null)
-        }
-      };
-    })
-  };
+    let matched=0,total=0;
+    layer.eachLayer(l=>{
+      total++;
+      const props = l.feature?.properties || {};
+      const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+      const i     = idx.get(code);
+      const dec   = (i!=null) ? deciles[i] : NaN;
+      const rk    = (i!=null) ? ranks[i]   : NaN;
+      const n     = deciles.length;
 
-  const blob = new Blob([JSON.stringify(out)],{type:'application/geo+json'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a');
-  a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.geojson`; a.click();
-  URL.revokeObjectURL(url);
-}
+      const fill = colorFor(dec);
+      l._currentFill = fill;
+      l.setStyle({ fillColor: fill });
 
-  // --- Map bootstrap
- window.addEventListener('DOMContentLoaded', async ()=>{
-  map = L.map('map',{preferCanvas:true,zoomSnap:0.25,zoomDelta:0.5}).setView([53.9,-2.5],6);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-              {attribution:'&copy; OpenStreetMap, &copy; CARTO'}).addTo(map);
+      const name = props[GEO_NAME_KEY] || code || "Area";
+      const content = `
+        <div>
+          <strong>${name}</strong><br/>
+          <span style="opacity:.75">${code}</span><br/>
+          Rank: <strong>${Number.isFinite(rk)?`${rk} / ${n}`:'—'}</strong><br/>
+          Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong>
+        </div>`;
+      l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
 
-  document.getElementById('fitBtn').addEventListener('click', ()=>{ if(layer) map.fitBounds(layer.getBounds(),{padding:[20,20]}); });
-  document.getElementById('legendToggle').addEventListener('click', ()=>{
-    legendVisible = !legendVisible; updateLegend(); localStorage.setItem('legendVisible', JSON.stringify(legendVisible));
-  });
-  document.getElementById('reset').addEventListener('click', ()=>{ Object.assign(weights, DEFAULT_WEIGHTS); renderSliders(); updateAll(); });
-  document.getElementById('exportCsv').addEventListener('click', exportCSV);
-  document.getElementById('exportGeo').addEventListener('click', exportGeo);
-
-  renderSliders();
-  updateLegend();
-
-  try {
-    // ---- load geojson
-    const g = await fetch(GEO_URL, {cache:'no-store'});
-    if (!g.ok) throw new Error('Geo fetch failed: '+g.status);
-    const raw = await g.json();
-    areasFC = looksLike27700(raw) ? reproject27700toWGS84(raw) : raw;
-    console.log("[GEO] feature props sample:", areasFC?.features?.[0]?.properties);
-
-    // ---- load file9 (auto-detect delimiter CSV/TSV) & normalise
-    const res = await fetch(CSV_URL, {cache:'no-store'});
-    if (!res.ok) throw new Error('CSV fetch failed: '+res.status);
-    const txt = await res.text();
-    const guessTab = txt.split('\n',1)[0].includes('\t');
-    const parsed = Papa.parse(txt, {
-      header: true, dynamicTyping: false, skipEmptyLines: true,
-      delimiter: guessTab ? '\t' : ','
+      if(Number.isFinite(dec)) matched++;
     });
 
-    file9 = (parsed.data || []).map(r => ({
-      LSOA21CD: String(r[CODE_COL] ?? "").trim().toUpperCase(),
-      income:  num(r.income),
-      employ:  num(r.employ),
-      educ:    num(r.educ),
-      health:  num(r.health),
-      crime:   num(r.crime),
-      barrier: num(r.barrier),
-      living:  num(r.living),
-    }));
-    console.log("[FILE9] rows:", file9.length, "sample:", file9[0]);
-
-    // Expose for quick console checks (optional)
-    window.__areas = areasFC;
-    window.__file9 = file9;
-
-    // draw & colour
-    draw();
-    updateAll();
-
-  } catch (err) {
-    console.error(err);
-    alert('Failed to load map/data. See console.');
+    const nanScores = scores.filter(x => !Number.isFinite(x)).length;
+    console.log(`[JOIN] matched ${matched} of ${total} | NaN scores: ${nanScores}/${scores.length}`);
+    updateLegend();
   }
-});
 
-  
+  function exportCSV(){
+    if(!file9?.length) return;
+    const normW = normalizeWeights(weights); // export with current weights
+    const scores = file9.map(r=>weightedScore(r,normW));
+    const {ranks,deciles} = rankAndDeciles(scores);
 
+    const rows = file9.map((r,i)=> ({
+      LSOA21CD: r.LSOA21CD,
+      score: scores[i],
+      rank: ranks[i],
+      decile: deciles[i]
+    }));
 
+    const cols=['LSOA21CD','score','rank','decile'];
+    const esc=s=>`"${String(s).replaceAll('"','""')}"`;
+    const csv=[cols.map(esc).join(','), ...rows.map(r=>cols.map(c=>esc(r[c])).join(','))].join('\n');
 
+    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
 
+  function exportGeo(){
+    if(!areasFC||!file9?.length) return;
+    const normW = normalizeWeights(weights);
+    const scores = file9.map(r=>weightedScore(r,normW));
+    const {ranks,deciles} = rankAndDeciles(scores);
 
+    const idx=new Map(); file9.forEach((r,i)=> idx.set(r.LSOA21CD,i));
+
+    const out = {
+      type:'FeatureCollection',
+      features: areasFC.features.map(ft=>{
+        const code = String(ft.properties?.LSOA21CD ?? ft.id ?? '').trim().toUpperCase();
+        const i = idx.get(code);
+        return {
+          ...ft,
+          properties:{
+            ...ft.properties,
+            _score:  (i!=null? scores[i]   : null),
+            _rank:   (i!=null? ranks[i]    : null),
+            _decile: (i!=null? deciles[i]  : null)
+          }
+        };
+      })
+    };
+
+    const blob = new Blob([JSON.stringify(out)],{type:'application/geo+json'});
+    const url=URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.geojson`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // --- App bootstrap
+  window.addEventListener('DOMContentLoaded', async ()=>{
+    map = L.map('map',{preferCanvas:true,zoomSnap:0.25,zoomDelta:0.5}).setView([53.9,-2.5],6);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                {attribution:'&copy; OpenStreetMap, &copy; CARTO'}).addTo(map);
+
+    document.getElementById('fitBtn').addEventListener('click', ()=>{ if(layer) map.fitBounds(layer.getBounds(),{padding:[20,20]}); });
+    document.getElementById('legendToggle').addEventListener('click', ()=>{
+      legendVisible = !legendVisible; updateLegend(); localStorage.setItem('legendVisible', JSON.stringify(legendVisible));
+    });
+    document.getElementById('reset').addEventListener('click', ()=>{
+      Object.assign(weights, DEFAULT_WEIGHTS);
+      renderSliders();
+      updateAll();
+    });
+    document.getElementById('exportCsv').addEventListener('click', exportCSV);
+    document.getElementById('exportGeo').addEventListener('click', exportGeo);
+
+    renderSliders();
+    updateLegend();
+
+    try {
+      // GeoJSON
+      const g = await fetch(GEO_URL, {cache:'no-store'});
+      if (!g.ok) throw new Error('Geo fetch failed: '+g.status);
+      const raw = await g.json();
+      areasFC = looksLike27700(raw) ? reproject27700toWGS84(raw) : raw;
+      console.log("[GEO] sample:", areasFC?.features?.[0]?.properties);
+
+      // File9 CSV/TSV
+      const res = await fetch(CSV_URL, {cache:'no-store'});
+      if (!res.ok) throw new Error('CSV fetch failed: '+res.status);
+      const txt = await res.text();
+      const guessTab = txt.split('\n',1)[0].includes('\t');
+      const parsed = Papa.parse(txt, {
+        header: true, dynamicTyping: false, skipEmptyLines: true,
+        delimiter: guessTab ? '\t' : ','
+      });
+
+      file9 = (parsed.data || []).map(r => ({
+        LSOA21CD: String(r[CODE_COL] ?? "").trim().toUpperCase(),
+        income:  num(r.income),
+        employ:  num(r.employ),
+        educ:    num(r.educ),
+        health:  num(r.health),
+        crime:   num(r.crime),
+        barrier: num(r.barrier),
+        living:  num(r.living),
+      }));
+      console.log("[FILE9] rows:", file9.length, "sample:", file9[0]);
+
+      // Optional: expose for console checks
+      window.__areas = areasFC;
+      window.__file9 = file9;
+
+      draw();
+      updateAll();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to load map/data. See console.');
+    }
+  });
+})();
 </script>
+
 </body>
 </html>
