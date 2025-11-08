@@ -107,9 +107,10 @@ const DK_MAP = {
   dom_barriers: "barrier",
   dom_living: "living",
 };
-const codeCol = "AREACD";          // in file9.csv
-const GEO_CODE_KEY = "AREACD";     // in areas.geojson
-const GEO_NAME_KEY = "AREANM";     // in areas.geojson
+const GEO_CODE_KEY = "LSOA21CD"; // GeoJSON code
+const GEO_NAME_KEY = "LSOA21NM"; // GeoJSON name
+const CODE_COL     = "LSOA21CD"; // CSV code (after you rename the header)
+
 
 
 // Red → white → green (1=red, 5=white, 10=green)
@@ -242,7 +243,7 @@ console.log("[GEO] feature props sample:", areasFC?.features?.[0]?.properties);
       delimiter: guessTab ? '\t' : ','
     });
   file9 = (parsed.data || []).map(r => ({
-  AREACD: cleanStr(r.AREACD).toUpperCase(),  // force uppercase & trim
+  LSOA21CD: String(r[CODE_COL] ?? "").trim().toUpperCase(),
   income:  num(r.income),
   employ:  num(r.employ),
   educ:    num(r.educ),
@@ -251,6 +252,7 @@ console.log("[GEO] feature props sample:", areasFC?.features?.[0]?.properties);
   barrier: num(r.barrier),
   living:  num(r.living),
 }));
+
 
 // quick sanity log
 console.log("[FILE9] rows:", file9.length, "sample:", file9[0]);
@@ -296,17 +298,19 @@ const scores = file9.map(r =>
   const { ranks, deciles } = rankAndDeciles(scores);
 
   // --- build index for quick lookup ---
-  const idx = new Map();
-file9.forEach((r,i) => idx.set(r.AREACD, i));
+const idx = new Map();
+file9.forEach((r,i)=> idx.set(r.LSOA21CD, i));
+
 
 
   // --- colour each polygon ---
   let matched=0,total=0;
   layer.eachLayer(l=>{
     total++;
-   const props = l.feature?.properties || {};
-const code  = cleanStr(props.AREACD).toUpperCase();
+const props = l.feature?.properties || {};
+const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase(); // LSOA21CD
 const i     = idx.get(code);
+
 
     const dec = (i!=null) ? deciles[i] : NaN;
 
@@ -314,7 +318,7 @@ const i     = idx.get(code);
     l._currentFill = fill;
     l.setStyle({ fillColor: fill });
 
-    const name = props.AREANM || code || "Area";
+    const name = props.LSOA21NM || code || "Area";
     const content = `<div><strong>${name}</strong><br/><span style="opacity:.75">${code}</span><br/>Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong></div>`;
     l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
 
@@ -336,9 +340,9 @@ console.log(`[JOIN] matched ${matched} of ${total} features | NaN scores: ${nanS
     const {ranks,deciles} = rankAndDeciles(scores);
     const rows=[]; const idx=new Map(); file9.forEach((r,i)=> idx.set(String(r[codeCol]).trim(),i));
     for(const [code,i] of idx.entries()){
-      rows.push({AREACD:code,score:scores[i],rank:ranks[i],decile:deciles[i]});
+      rows.push({LSOA21CD:code,score:scores[i],rank:ranks[i],decile:deciles[i]});
     }
-    const cols=['AREACD','score','rank','decile'];
+    const cols=['LSOA21CD','score','rank','decile'];
     const esc=s=>`"${String(s).replaceAll('"','""')}"`;
     const csv=[cols.map(esc).join(','), ...rows.map(r=>cols.map(c=>esc(r[c])).join(','))].join('\n');
     const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob);
@@ -354,7 +358,7 @@ console.log(`[JOIN] matched ${matched} of ${total} features | NaN scores: ${nanS
     const out = {
       type:'FeatureCollection',
       features: areasFC.features.map(ft=>{
-        const code = String(ft.properties?.AREACD ?? ft.id ?? '').trim();
+        const code = String(ft.properties?.LSOA21CD ?? ft.id ?? '').trim();
         const i = idx.get(code);
         return {
           ...ft,
