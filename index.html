@@ -152,6 +152,13 @@ const PALETTE = [
     for (const f of out.features){ if (f.geometry?.coordinates){ f.geometry.coordinates = rp(f.geometry.coordinates); } }
     return out;
   }
+function refreshWeightLabels(){
+  const norm = normalizeWeights(weights);
+  Object.keys(normLabel).forEach(k => {
+    const el = normLabel[k];
+    if (el) el.textContent = `${(norm[k] * 100).toFixed(1)}%`;
+  });
+}
 
   function refreshWeightLabels(){
   const norm = normalizeWeights(weights);
@@ -194,18 +201,40 @@ const num = v => {
   const slidersDiv = document.getElementById('sliders');
   const normLabel = {};
   function renderSliders(){
-    slidersDiv.innerHTML='';
-    const norm = normalizeWeights(weights);
-    DOMAIN_KEYS.forEach(([key,label])=>{
-      const wrap=document.createElement('div'); wrap.className='row';
-      const top=document.createElement('label'); top.innerHTML=`<span>${label}</span><span id="lab-${key}">${(norm[key]*100).toFixed(1)}%</span>`;
-      const input=document.createElement('input'); input.type='range'; input.min='0'; input.max='40'; input.step='0.1'; input.value=String(weights[key]);
-   input.addEventListener('input',()=>{
-  weights[key] = Number(input.value);
-  refreshWeightLabels();   // update the percentage labels
-  updateAll();             // recolour the map
-});
-)
+  slidersDiv.innerHTML = '';
+  const norm = normalizeWeights(weights);
+
+  DOMAIN_KEYS.forEach(([key, label]) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+
+    const top = document.createElement('label');
+    const pct = ((norm[key] || 0) * 100).toFixed(1);
+    top.innerHTML = `<span>${label}</span><span id="lab-${key}">${pct}%</span>`;
+
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = '0';
+    input.max = '40';
+    input.step = '0.1';
+    input.value = String(weights[key]);
+
+    input.addEventListener('input', () => {
+      weights[key] = Number(input.value);
+      refreshWeightLabels();  // update the percentage labels
+      updateAll();            // recolour the map
+    });
+
+    wrap.appendChild(top);
+    wrap.appendChild(input);
+    slidersDiv.appendChild(wrap);
+
+    // keep a handle to the label span so we can update it fast
+    normLabel[key] = top.querySelector('span:last-child');
+  });
+}
+
+
   
   function updateLegend(){
     const el = document.getElementById('legend');
