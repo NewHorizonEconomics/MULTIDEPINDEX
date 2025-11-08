@@ -381,124 +381,12 @@ function exportGeo(){
   }
 });
 
-  function draw(){
-    if(layer) { map.removeLayer(layer); layer=null; }
-    layer = L.geoJSON(areasFC, {
-      style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
-      onEachFeature: (f,l)=>{
-        l.on({
-          mouseover:e=>{ e.target.setStyle({weight:2,color:'#fff',fillColor:e.target._currentFill,fillOpacity:1}); },
-          mouseout:e=>{ e.target.setStyle({weight:1.1,color:'#9fb6e6',fillColor:e.target._currentFill,fillOpacity:0.9}); },
-          click:()=> map.fitBounds(l.getBounds(), {maxZoom:11})
-        });
-      }
-    }).addTo(map);
-    map.fitBounds(layer.getBounds(),{padding:[20,20]});
-  }
+  
 
 
 
- // =====================================================
-//  updateAll() — joins File9 to the map and colours areas
-// =====================================================
-function updateAll() {
-  // --- weights are fixed (you can skip this if not reweighting) ---
-  const normW = normalizeWeights(DEFAULT_WEIGHTS); // or your weights logic
-
-  // --- compute composite score and decile per row ---
-const scores = file9.map(r =>
-  r.income  * normW.dom_income     +
-  r.employ  * normW.dom_employment +
-  r.educ    * normW.dom_education  +
-  r.health  * normW.dom_health     +
-  r.crime   * normW.dom_crime      +
-  r.barrier * normW.dom_barriers   +
-  r.living  * normW.dom_living
-);
 
 
-
-  const { ranks, deciles } = rankAndDeciles(scores);
-
-  // --- build index for quick lookup ---
-const idx = new Map();
-file9.forEach((r,i)=> idx.set(r.LSOA21CD, i));
-
-
-
-  // --- colour each polygon ---
-  let matched=0,total=0;
-  layer.eachLayer(l=>{
-    total++;
-const props = l.feature?.properties || {};
-const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase(); // LSOA21CD
-const i     = idx.get(code);
-
-
-    const dec = (i!=null) ? deciles[i] : NaN;
-
-    const fill = colorFor(dec);
-    l._currentFill = fill;
-    l.setStyle({ fillColor: fill });
-
-    const name = props.LSOA21NM || code || "Area";
-    const content = `<div><strong>${name}</strong><br/><span style="opacity:.75">${code}</span><br/>Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong></div>`;
-    l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
-
-    if(Number.isFinite(dec)) matched++;
-  });
-
-  console.log(`[JOIN] matched ${matched} of ${total} features`);
-  updateLegend();
-// how many polygons matched and how many NaNs in scores?
-const nanScores = scores.filter(x => !Number.isFinite(x)).length;
-console.log(`[JOIN] matched ${matched} of ${total} features | NaN scores: ${nanScores}/${scores.length}`);
-
-}
-
-  function exportCSV(){
-    if(!file9) return;
-    const normW = normalizeWeights(weights);
-    const scores = file9.map(r=>weightedScore(r,normW,DK_MAP));
-    const {ranks,deciles} = rankAndDeciles(scores);
-    const rows=[]; const idx=new Map(); file9.forEach((r,i)=> idx.set(String(r[codeCol]).trim(),i));
-    for(const [code,i] of idx.entries()){
-      rows.push({LSOA21CD:code,score:scores[i],rank:ranks[i],decile:deciles[i]});
-    }
-    const cols=['LSOA21CD','score','rank','decile'];
-    const esc=s=>`"${String(s).replaceAll('"','""')}"`;
-    const csv=[cols.map(esc).join(','), ...rows.map(r=>cols.map(c=>esc(r[c])).join(','))].join('\n');
-    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob);
-    const a=document.createElement('a'); a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url);
-  }
-
-  function exportGeo(){
-    if(!areasFC||!file9) return;
-    const normW = normalizeWeights(weights);
-    const scores = file9.map(r=>weightedScore(r,normW,DK_MAP));
-    const {ranks,deciles} = rankAndDeciles(scores);
-    const idx=new Map(); file9.forEach((r,i)=> idx.set(String(r[codeCol]).trim(),i));
-    const out = {
-      type:'FeatureCollection',
-      features: areasFC.features.map(ft=>{
-        const code = String(ft.properties?.LSOA21CD ?? ft.id ?? '').trim();
-        const i = idx.get(code);
-        return {
-          ...ft,
-          properties:{
-            ...ft.properties,
-            _score: (i!=null? scores[i] : null),
-            _rank: (i!=null? ranks[i] : null),
-            _decile: (i!=null? deciles[i] : null)
-          }
-        };
-      })
-    };
-    const blob = new Blob([JSON.stringify(out)],{type:'application/geo+json'});
-    const url=URL.createObjectURL(blob); const a=document.createElement('a');
-    a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.geojson`; a.click(); URL.revokeObjectURL(url);
-  }
-})();
 </script>
 </body>
 </html>
