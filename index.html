@@ -257,29 +257,7 @@ const PALETTE = [
     map.fitBounds(layer.getBounds(),{padding:[20,20]});
   }
 
-  // build CSV index (uppercased & trimmed for safety)
-const idx = new Map();
-file9.forEach((r,i) => {
-  const raw = r[codeCol];
-  if (raw != null) idx.set(String(raw).toUpperCase().trim(), i);
-});
 
-// …inside layer.eachLayer(l => { … })
-const props = l.feature?.properties || {};
-const code = String(props[GEO_CODE_KEY] ?? "").toUpperCase().trim();
-const i = idx.get(code);
-const dec = (i != null) ? deciles[i] : NaN;
-const fill = colorFor(dec);
-l._currentFill = fill; l.setStyle({ fillColor: fill });
-
-// nicer tooltip using AREANM
-const name = props[GEO_NAME_KEY] || code || "Area";
-const content = `<div><strong>${name}</strong><br/><span style="opacity:.75">${code}</span><br/>Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong></div>`;
-l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
-
-    updateLegend();
-    // console.log(`Matched ${matched}/${total}`);
-  }
 
  // =====================================================
 //  updateAll() — joins File9 to the map and colours areas
@@ -299,7 +277,6 @@ function updateAll() {
   Number(r[DK_MAP.dom_living])     * normW.dom_living
 );
 
-  });
 
   const { ranks, deciles } = rankAndDeciles(scores);
 
