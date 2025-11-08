@@ -153,6 +153,14 @@ const PALETTE = [
     return out;
   }
 
+  function refreshWeightLabels(){
+  const norm = normalizeWeights(weights);
+  DOMAIN_KEYS.forEach(([key])=>{
+    const el = normLabel[key];
+    if (el) el.textContent = `${(norm[key]*100).toFixed(1)}%`;
+  });
+}
+
   function normalizeWeights(w){
     const s = Object.values(w).reduce((a,b)=>a+(b||0),0) || 1;
     const o={}; for (const k in w) o[k]= (w[k]||0)/s; return o;
@@ -192,10 +200,12 @@ const num = v => {
       const wrap=document.createElement('div'); wrap.className='row';
       const top=document.createElement('label'); top.innerHTML=`<span>${label}</span><span id="lab-${key}">${(norm[key]*100).toFixed(1)}%</span>`;
       const input=document.createElement('input'); input.type='range'; input.min='0'; input.max='40'; input.step='0.1'; input.value=String(weights[key]);
-      input.addEventListener('input',()=>{ weights[key]=Number(input.value); updateAll(); });
-      wrap.appendChild(top); wrap.appendChild(input); slidersDiv.appendChild(wrap);
-      normLabel[key]=top.querySelector('span:last-child');
-    });
+   input.addEventListener('input',()=>{
+  weights[key] = Number(input.value);
+  refreshWeightLabels();   // update the percentage labels
+  updateAll();             // recolour the map
+});
+
   }
   function updateLegend(){
     const el = document.getElementById('legend');
@@ -225,7 +235,9 @@ function draw(){
 
 // Joins File9 to the map and colours areas
 function updateAll() {
-  const normW = normalizeWeights(DEFAULT_WEIGHTS);
+  const normW = normalizeWeights(weights); // <-- was DEFAULT_WEIGHTS
+  refreshWeightLabels();                   // keep the sidebar % in sync
+}
 
   const scores = file9.map(r =>
     r.income  * normW.dom_income     +
@@ -247,16 +259,25 @@ function updateAll() {
     total++;
     const props = l.feature?.properties || {};
     const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase(); // LSOA21CD from GeoJSON
-    const i     = idx.get(code);
-    const dec   = (i!=null) ? deciles[i] : NaN;
+const i     = idx.get(code);
+const dec   = (i!=null) ? deciles[i] : NaN;
+const rk    = (i!=null) ? ranks[i]   : NaN;
+const n     = deciles.length;
 
-    const fill = colorFor(dec);
-    l._currentFill = fill;
-    l.setStyle({ fillColor: fill });
+const fill = colorFor(dec);
+l._currentFill = fill;
+l.setStyle({ fillColor: fill });
 
-    const name = props[GEO_NAME_KEY] || code || "Area";
-    const content = `<div><strong>${name}</strong><br/><span style="opacity:.75">${code}</span><br/>Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong></div>`;
-    l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
+const name = props[GEO_NAME_KEY] || code || "Area";
+const content = `
+  <div>
+    <strong>${name}</strong><br/>
+    <span style="opacity:.75">${code}</span><br/>
+    Rank: <strong>${Number.isFinite(rk)?`${rk} / ${n}`:'—'}</strong><br/>
+    Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong>
+  </div>`;
+l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
+
 
     if(Number.isFinite(dec)) matched++;
   });
@@ -268,7 +289,8 @@ function updateAll() {
 
 function exportCSV(){
   if(!file9?.length) return;
-  const normW = normalizeWeights(DEFAULT_WEIGHTS);
+ const normW = normalizeWeights(weights); // instead of DEFAULT_WEIGHTS
+
   const scores = file9.map(r=>weightedScore(r,normW,DK_MAP));
   const {ranks,deciles} = rankAndDeciles(scores);
 
