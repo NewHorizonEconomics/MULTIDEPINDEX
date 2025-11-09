@@ -143,9 +143,6 @@ let LAST_DECILES  = [];
 
   let legendVisible = JSON.parse(localStorage.getItem('legendVisible') ?? 'true');
 const LAYER_BY_CODE = new Map();       // code -> Leaflet layer
-const FEATURE_META  = new Map();       // code -> {name}
-let LAST_RANKS = [], LAST_DECILES = [];  // set in updateAll()
-let FILE9_INDEX = new Map();             // code -> index in file9[] (set in updateAll)
 
   // --- Helpers
   const firstXY = (c)=>{ if(!c) return null; if (typeof c[0]==='number') return c; for(const d of c){ const v=firstXY(d); if(v) return v; } return null; };
