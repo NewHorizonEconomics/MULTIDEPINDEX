@@ -133,7 +133,14 @@
 
   // --- State
   let map, layer, areasFC = null, file9 = [];
+
   const weights = {...DEFAULT_WEIGHTS};
+  let SELECTED_CODE = null;      // currently selected area
+let FILE9_INDEX   = new Map(); // built in updateAll()
+let FEATURE_META  = new Map(); // stores name lookup for tooltips/search
+let LAST_RANKS    = [];
+let LAST_DECILES  = [];
+
   let legendVisible = JSON.parse(localStorage.getItem('legendVisible') ?? 'true');
 const LAYER_BY_CODE = new Map();       // code -> Leaflet layer
 const FEATURE_META  = new Map();       // code -> {name}
