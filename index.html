@@ -328,10 +328,35 @@ function selectByCode(codeRaw){
 
   layer = L.geoJSON(areasFC, {
     style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
-    onEachFeature: (f,l)=>{
-      const props = f?.properties || {};
-      const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-      const name  = String(props[GEO_NAME_KEY] ?? code || "Area");
+  onEachFeature: (f, l) => {
+  const props = (f && f.properties) ? f.properties : {};
+
+  const code = String(
+    (props[GEO_CODE_KEY] !== undefined && props[GEO_CODE_KEY] !== null)
+      ? props[GEO_CODE_KEY]
+      : (f.id ?? "")
+  ).trim().toUpperCase();
+
+  const rawName = props[GEO_NAME_KEY];
+  const name = String(
+    (rawName !== undefined && rawName !== null && rawName !== "")
+      ? rawName
+      : (code || "Area")
+  );
+
+  if (code) {
+    LAYER_BY_CODE.set(code, l);
+    FEATURE_META.set(code, { name });
+  }
+
+  l.on({
+    mouseover: e => { e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 }); },
+    mouseout:  e => { e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillColor: e.target._currentFill, fillOpacity: 0.9 }); },
+    click:     () => map.fitBounds(l.getBounds(), { maxZoom: 11 })
+  });
+}
+
+
       if (code) {
         LAYER_BY_CODE.set(code, l);
         FEATURE_META.set(code, { name });
