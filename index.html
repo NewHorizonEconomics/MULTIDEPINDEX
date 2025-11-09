@@ -382,10 +382,15 @@ file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
       r.barrier * normW.dom_barriers   +
       r.living  * normW.dom_living
     );
-    const { ranks, deciles } = rankAndDeciles(scores);
+    const rd = rankAndDeciles(scores);
+LAST_RANKS   = rd.ranks;
+LAST_DECILES = rd.deciles;
 
-    const idx = new Map(); // index by LSOA code
-    file9.forEach((r,i)=> idx.set(r.LSOA21CD, i));
+// index by LSOA code (save globally so search can use it)
+FILE9_INDEX = new Map();
+file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
+
+const n = LAST_DECILES.length; // for tooltips
 
     let matched=0,total=0;
     layer.eachLayer(l=>{
