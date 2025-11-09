@@ -230,16 +230,20 @@ function findMatches(query){
 function focusLayerSmart(lyr){
   const b = lyr.getBounds();
   const curZoom = map.getZoom();
-  const fitZoom = map.getBoundsZoom(b, true); // zoom level that would snugly fit the polygon
+  const fitZoom = map.getBoundsZoom(b, true); // snug fit level
 
-  if (fitZoom > curZoom) {
-    // Need to zoom IN to fit it
-    map.fitBounds(b, { padding: [20,20] });
+  // Cap how far we zoom in, and don't exceed a sensible upper bound (e.g. 11)
+  const MAX_ALLOWED = 11;                  // tweak if you like
+  const desired = Math.min(fitZoom, MAX_ALLOWED);
+
+  // Only zoom if we'd go in by at least ~0.75 levels; otherwise just pan to center
+  if (desired > curZoom + 0.75) {
+    map.fitBounds(b, { padding: [24,24], maxZoom: MAX_ALLOWED });
   } else {
-    // Already zoomed in enough — don't zoom out, just pan to centre
     map.panTo(b.getCenter());
   }
 }
+
 
 function showResults(matches){
   const box = document.getElementById('searchResults');
