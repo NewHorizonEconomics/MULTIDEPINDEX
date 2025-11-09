@@ -53,6 +53,22 @@
         <button id="legendToggle" class="outline" style="flex:1">Hide legend</button>
       </div>
     </div>
+<div class="group">
+  <label>Search by name or code</label>
+  <input id="searchBox" type="text" placeholder="e.g. E01000001 or Plymouth" />
+  <div id="searchResults" class="row" style="display:none; max-height:180px; overflow:auto; margin-top:8px;"></div>
+</div>
+
+<div class="group">
+  <div id="infoBox" class="row" style="display:none;">
+    <div style="font-weight:700; margin-bottom:4px;" id="infoName">—</div>
+    <div style="font-size:12px; color:var(--muted);" id="infoCode">—</div>
+    <div style="margin-top:6px;">
+      <div>Rank: <strong id="infoRank">—</strong></div>
+      <div>Decile: <strong id="infoDecile">—</strong></div>
+    </div>
+  </div>
+</div>
 
     <div id="sliders"></div>
 
@@ -119,6 +135,10 @@
   let map, layer, areasFC = null, file9 = [];
   const weights = {...DEFAULT_WEIGHTS};
   let legendVisible = JSON.parse(localStorage.getItem('legendVisible') ?? 'true');
+const LAYER_BY_CODE = new Map();       // code -> Leaflet layer
+const FEATURE_META  = new Map();       // code -> {name}
+let LAST_RANKS = [], LAST_DECILES = [];  // set in updateAll()
+let FILE9_INDEX = new Map();             // code -> index in file9[] (set in updateAll)
 
   // --- Helpers
   const firstXY = (c)=>{ if(!c) return null; if (typeof c[0]==='number') return c; for(const d of c){ const v=firstXY(d); if(v) return v; } return null; };
@@ -155,6 +175,94 @@
   const cleanStr = v => String(v ?? "").replace(/^\uFEFF/, "").trim();
   const num = v => { const s = cleanStr(v).replace(/[\s,]/g,"").replace(/[−–—]/g,"-"); const x = +s; return Number.isFinite(x) ? x : NaN; };
 
+  const normKey = s => String(s ?? "").trim().toUpperCase();
+
+function findMatches(query){
+  const q = normKey(query);
+  if (!q || q.length < 2) return [];
+
+  const out = [];
+
+  // 1) direct code match or contains
+  for (const [code, l] of LAYER_BY_CODE.entries()){
+    if (code.includes(q)) {
+      out.push({ code, name: FEATURE_META.get(code)?.name || code });
+    }
+  }
+
+  // 2) name contains (case-insensitive). Avoid duplicating codes already added.
+  for (const [code, meta] of FEATURE_META.entries()){
+    const nameU = normKey(meta?.name || "");
+    if (nameU.includes(q) && !out.some(o => o.code === code)) {
+      out.push({ code, name: meta?.name || code });
+    }
+  }
+
+  // Sort: name then code for a tidy list
+  out.sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  return out.slice(0, 200); // safety cap
+}
+
+function showResults(matches){
+  const box = document.getElementById('searchResults');
+  if (!box) return;
+  if (!matches.length){
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'block';
+  box.innerHTML = matches.map(m =>
+    `<button data-code="${m.code}" style="display:block;width:100%;text-align:left;background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin:4px 0;color:var(--text)">
+       <div style="font-weight:600">${m.name}</div>
+       <div style="font-size:12px;color:var(--muted)">${m.code}</div>
+     </button>`
+  ).join('');
+
+  // click handling
+  box.querySelectorAll('button[data-code]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      selectByCode(btn.getAttribute('data-code'));
+      // hide results after selection
+      box.style.display = 'none';
+    });
+  });
+}
+
+function selectByCode(codeRaw){
+  const code = normKey(codeRaw);
+  const lyr  = LAYER_BY_CODE.get(code);
+  if (!lyr) return;
+
+  // Zoom to polygon
+  map.fitBounds(lyr.getBounds(), { maxZoom: 11 });
+
+  // Open its tooltip if we have one
+  if (lyr.getTooltip && lyr.getTooltip()) {
+    try { lyr.openTooltip(); } catch {}
+  }
+
+  // Populate infoBox using latest ranks/deciles
+  const info = document.getElementById('infoBox');
+  const nmEl = document.getElementById('infoName');
+  const cdEl = document.getElementById('infoCode');
+  const rkEl = document.getElementById('infoRank');
+  const dcEl = document.getElementById('infoDecile');
+  if (info && nmEl && cdEl && rkEl && dcEl) {
+    const i = FILE9_INDEX.get(code);
+    const rk = Number.isInteger(i) ? LAST_RANKS[i]   : NaN;
+    const dc = Number.isInteger(i) ? LAST_DECILES[i] : NaN;
+    const n  = LAST_DECILES.length;
+
+    nmEl.textContent = FEATURE_META.get(code)?.name || code;
+    cdEl.textContent = code;
+    rkEl.textContent = Number.isFinite(rk) ? `${rk} / ${n}` : '—';
+    dcEl.textContent = Number.isFinite(dc) ? `${dc}` : '—';
+    info.style.display = 'block';
+  }
+}
+
+  
   // --- UI pieces
   const slidersDiv = document.getElementById('sliders');
   const normLabel = {}; // key -> span element
@@ -214,21 +322,41 @@
   }
 
   function draw(){
-    if(layer) { map.removeLayer(layer); layer=null; }
-    layer = L.geoJSON(areasFC, {
-      style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
-      onEachFeature: (f,l)=>{
-        l.on({
-          mouseover:e=>{ e.target.setStyle({weight:2,color:'#fff',fillColor:e.target._currentFill,fillOpacity:1}); },
-          mouseout:e=>{ e.target.setStyle({weight:1.1,color:'#9fb6e6',fillColor:e.target._currentFill,fillOpacity:0.9}); },
-          click:()=> map.fitBounds(l.getBounds(), {maxZoom:11})
-        });
+  if(layer) { map.removeLayer(layer); layer=null; }
+  LAYER_BY_CODE.clear();
+  FEATURE_META.clear();
+
+  layer = L.geoJSON(areasFC, {
+    style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
+    onEachFeature: (f,l)=>{
+      const props = f?.properties || {};
+      const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+      const name  = String(props[GEO_NAME_KEY] ?? code || "Area");
+      if (code) {
+        LAYER_BY_CODE.set(code, l);
+        FEATURE_META.set(code, { name });
       }
-    }).addTo(map);
-    map.fitBounds(layer.getBounds(),{padding:[20,20]});
-  }
+      l.on({
+        mouseover:e=>{ e.target.setStyle({weight:2,color:'#fff',fillColor:e.target._currentFill,fillOpacity:1}); },
+        mouseout:e=>{ e.target.setStyle({weight:1.1,color:'#9fb6e6',fillColor:e.target._currentFill,fillOpacity:0.9}); },
+        click:()=> map.fitBounds(l.getBounds(), {maxZoom:11})
+      });
+    }
+  }).addTo(map);
+
+  map.fitBounds(layer.getBounds(),{padding:[20,20]});
+}
+
 
   function updateAll(){
+  const { ranks, deciles } = rankAndDeciles(scores);
+LAST_RANKS   = ranks;
+LAST_DECILES = deciles;
+
+// index by LSOA code
+FILE9_INDEX = new Map();
+file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
+
     const normW = normalizeWeights(weights); // use LIVE weights
     refreshWeightLabels();
 
@@ -261,6 +389,8 @@
       l.setStyle({ fillColor: fill });
 
       const name = props[GEO_NAME_KEY] || code || "Area";
+     FEATURE_META.set(code, { name });  // keep name handy for search result display
+
       const content = `
         <div>
           <strong>${name}</strong><br/>
@@ -352,6 +482,37 @@
 
     renderSliders();
     updateLegend();
+// Search wiring
+const searchBox = document.getElementById('searchBox');
+const resultsEl = document.getElementById('searchResults');
+
+if (searchBox) {
+  // live search as you type
+  searchBox.addEventListener('input', ()=>{
+    const q = searchBox.value;
+    if (q.length < 2) { resultsEl.style.display='none'; resultsEl.innerHTML=''; return; }
+    const matches = findMatches(q);
+    if (matches.length === 1) {
+      // single hit: zoom immediately but still show box content briefly
+      showResults(matches);
+      selectByCode(matches[0].code);
+    } else {
+      showResults(matches);
+    }
+  });
+
+  // Enter key: if multiple, keep list; if exact code, select
+  searchBox.addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter') {
+      const q = searchBox.value;
+      const matches = findMatches(q);
+      if (matches.length === 1) {
+        selectByCode(matches[0].code);
+        resultsEl.style.display='none';
+      }
+    }
+  });
+}
 
     try {
       // GeoJSON
