@@ -395,7 +395,12 @@ function selectByCode(codeRaw){
     total++;
     const props = l.feature?.properties || {};
     const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-    const name  = String(props[GEO_NAME_KEY] ?? code || "Area");
+  const name = String(
+  (props[GEO_NAME_KEY] !== undefined && props[GEO_NAME_KEY] !== null && props[GEO_NAME_KEY] !== "")
+    ? props[GEO_NAME_KEY]
+    : (code || "Area")
+);
+
 
     const i   = FILE9_INDEX.get(code);
     const dec = (i != null) ? LAST_DECILES[i] : NaN;
