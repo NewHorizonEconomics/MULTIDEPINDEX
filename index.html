@@ -227,6 +227,19 @@ function findMatches(query){
   out.sort((a,b)=> (a.name||"").localeCompare(b.name||""));
   return out.slice(0, 200); // safety cap
 }
+function focusLayerSmart(lyr){
+  const b = lyr.getBounds();
+  const curZoom = map.getZoom();
+  const fitZoom = map.getBoundsZoom(b, true); // zoom level that would snugly fit the polygon
+
+  if (fitZoom > curZoom) {
+    // Need to zoom IN to fit it
+    map.fitBounds(b, { padding: [20,20] });
+  } else {
+    // Already zoomed in enough — don't zoom out, just pan to centre
+    map.panTo(b.getCenter());
+  }
+}
 
 function showResults(matches){
   const box = document.getElementById('searchResults');
@@ -267,7 +280,8 @@ function selectByCode(codeRaw){
   if (!lyr) return;
 
   // 4) Zoom + open its tooltip
-  map.fitBounds(lyr.getBounds(), { maxZoom: 11 });
+  focusLayerSmart(lyr);
+
   try { if (lyr.getTooltip && lyr.getTooltip()) lyr.openTooltip(); } catch {}
 
   // 5) Refresh the side panel using latest ranks/deciles
@@ -370,11 +384,8 @@ input.addEventListener('input', ()=>{
   l.on({
     mouseover: e => { e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 }); },
     mouseout:  e => { e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillColor: e.target._currentFill, fillOpacity: 0.9 }); },
-   click: () => {
-  const props = (f && f.properties) ? f.properties : {};
-  const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-  if (code) selectByCode(code);          // reuse the same path as the search
-}
+  focusLayerSmart(lyr);
+
 
   });
 }     
