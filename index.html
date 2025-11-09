@@ -272,25 +272,41 @@ function showResults(matches){
 }
 
 function selectByCode(codeRaw){
-  // 1) Normalise input first
-  const code = normKey(codeRaw);
-  if (!code) return;
+  const code = String(codeRaw ?? "").trim().toUpperCase();
+  if (!layer || !code) return;
 
-  // 2) Now safely store the selection
-  SELECTED_CODE = code;
+  let found = null;
 
-  // 3) Find the layer
-  const lyr = LAYER_BY_CODE.get(code);
-  if (!lyr) return;
+  layer.eachLayer(l=>{
+    const props = l.feature?.properties || {};
+    const lyrCode = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+    if (lyrCode === code) found = l;
+  });
 
-  // 4) Zoom + open its tooltip
-  focusLayerSmart(lyr);
+  if (!found) {
+    console.warn("Code not found:", code);
+    return;
+  }
 
-  try { if (lyr.getTooltip && lyr.getTooltip()) lyr.openTooltip(); } catch {}
+  // 🔹 Clear previous selection
+  if (selectedLayer) {
+    selectedLayer.setStyle({ weight: 1.1, color: '#9fb6e6' });
+  }
 
-  // 5) Refresh the side panel using latest ranks/deciles
+  // 🔹 Apply new highlight
+  found.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
+  selectedLayer = found;
+
+  // 🔹 Focus map intelligently
+  focusLayerSmart(found);
+
+  // 🔹 Update info box / tooltip
+  const props = found.feature?.properties || {};
+  const codeVal = props[GEO_CODE_KEY] || "";
+  SELECTED_CODE = codeVal;
   refreshInfoBoxFromSelection();
 }
+
 
   
   // --- UI pieces
@@ -385,15 +401,21 @@ input.addEventListener('input', ()=>{
     FEATURE_META.set(code, { name });
   }
 
-  l.on({
-    mouseover: e => { e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 }); },
-    mouseout:  e => { e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillColor: e.target._currentFill, fillOpacity: 0.9 }); },
- 
+l.on({
+  mouseover: e => {
+    e.target.setStyle({ weight: 2, color: '#fff', fillOpacity: 1 });
+  },
+  mouseout: e => {
+    // Don't reset style if it's the selected one
+    if (e.target === selectedLayer) return;
+    e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillOpacity: 0.9 });
+  },
   click: () => {
-    const props = (f && f.properties) ? f.properties : {};
-    const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-    if (code) selectByCode(code);   // selectByCode -> focusLayerSmart(l) internally
+    const props = f.properties || {};
+    const code = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+    if (code) selectByCode(code);
   }
+
 
 
 
@@ -436,6 +458,7 @@ input.addEventListener('input', ()=>{
   let matched = 0, total = 0;
 
    let SELECTED_CODE = null;  // currently selected LSOA code (UPPERCASE)
+let selectedLayer = null;
 
   layer.eachLayer(l=>{
     total++;
