@@ -361,69 +361,70 @@ function selectByCode(codeRaw){
 }
 
 
-  function updateAll(){
-  const { ranks, deciles } = rankAndDeciles(scores);
-LAST_RANKS   = ranks;
-LAST_DECILES = deciles;
+ function updateAll(){
+  // Safety: only proceed when we have data and a drawn layer
+  if (!layer || !Array.isArray(file9) || file9.length === 0) return;
 
-// index by LSOA code
-FILE9_INDEX = new Map();
-file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
+  // 1) Use LIVE weights to compute scores
+  const normW = normalizeWeights(weights);
 
-    const normW = normalizeWeights(weights); // use LIVE weights
-    refreshWeightLabels();
+  const scores = file9.map(r =>
+    (Number(r.income)  || 0) * normW.dom_income     +
+    (Number(r.employ)  || 0) * normW.dom_employment +
+    (Number(r.educ)    || 0) * normW.dom_education  +
+    (Number(r.health)  || 0) * normW.dom_health     +
+    (Number(r.crime)   || 0) * normW.dom_crime      +
+    (Number(r.barrier) || 0) * normW.dom_barriers   +
+    (Number(r.living)  || 0) * normW.dom_living
+  );
 
-    const scores = file9.map(r =>
-      r.income  * normW.dom_income     +
-      r.employ  * normW.dom_employment +
-      r.educ    * normW.dom_education  +
-      r.health  * normW.dom_health     +
-      r.crime   * normW.dom_crime      +
-      r.barrier * normW.dom_barriers   +
-      r.living  * normW.dom_living
-    );
-    const rd = rankAndDeciles(scores);
-LAST_RANKS   = rd.ranks;
-LAST_DECILES = rd.deciles;
+  // 2) Ranks/deciles (write to globals used by search/info)
+  const rd = rankAndDeciles(scores);
+  LAST_RANKS   = rd.ranks;
+  LAST_DECILES = rd.deciles;
 
-// index by LSOA code (save globally so search can use it)
-FILE9_INDEX = new Map();
-file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
+  // 3) Index file9 by code (global so search can use it)
+  FILE9_INDEX = new Map();
+  file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
 
-const n = LAST_DECILES.length; // for tooltips
+  // 4) Recolour polygons + refresh tooltips
+  const n = LAST_DECILES.length;
+  let matched = 0, total = 0;
 
-    let matched=0,total=0;
-    layer.eachLayer(l=>{
-      total++;
-      const props = l.feature?.properties || {};
-      const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+  layer.eachLayer(l=>{
+    total++;
+    const props = l.feature?.properties || {};
+    const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+    const name  = String(props[GEO_NAME_KEY] ?? code || "Area");
+
     const i   = FILE9_INDEX.get(code);
-const dec = (i!=null) ? LAST_DECILES[i] : NaN;
-const rk  = (i!=null) ? LAST_RANKS[i]   : NaN;
+    const dec = (i != null) ? LAST_DECILES[i] : NaN;
+    const rk  = (i != null) ? LAST_RANKS[i]   : NaN;
 
-      const fill = colorFor(dec);
-      l._currentFill = fill;
-      l.setStyle({ fillColor: fill });
+    const fill = colorFor(dec);
+    l._currentFill = fill;
+    l.setStyle({ fillColor: fill });
 
-      const name = props[GEO_NAME_KEY] || code || "Area";
-     FEATURE_META.set(code, { name });  // keep name handy for search result display
+    // keep meta fresh for search panel
+    FEATURE_META.set(code, { name });
 
-      const content = `
-        <div>
-          <strong>${name}</strong><br/>
-          <span style="opacity:.75">${code}</span><br/>
-          Rank: <strong>${Number.isFinite(rk)?`${rk} / ${n}`:'—'}</strong><br/>
-          Decile: <strong>${Number.isFinite(dec)?dec:'—'}</strong>
-        </div>`;
-      l.bindTooltip(content, { sticky:true, opacity:0.95, className:'tooltip' });
+    const tip = `
+      <div>
+        <strong>${name}</strong><br/>
+        <span style="opacity:.75">${code}</span><br/>
+        Rank: <strong>${Number.isFinite(rk) ? `${rk} / ${n}` : '—'}</strong><br/>
+        Decile: <strong>${Number.isFinite(dec) ? dec : '—'}</strong>
+      </div>`;
+    l.bindTooltip(tip, { sticky:true, opacity:0.95, className:'tooltip' });
 
-      if(Number.isFinite(dec)) matched++;
-    });
+    if (Number.isFinite(dec)) matched++;
+  });
 
-    const nanScores = scores.filter(x => !Number.isFinite(x)).length;
-    console.log(`[JOIN] matched ${matched} of ${total} | NaN scores: ${nanScores}/${scores.length}`);
-    updateLegend();
-  }
+  console.log(`[JOIN] matched ${matched} of ${total}`);
+  refreshWeightLabels();
+  updateLegend();
+}
+
 
   function exportCSV(){
     if(!file9?.length) return;
