@@ -255,38 +255,23 @@ function showResults(matches){
 }
 
 function selectByCode(codeRaw){
-SELECTED_CODE = code;   // remember selection
-
+  // 1) Normalise input first
   const code = normKey(codeRaw);
-  const lyr  = LAYER_BY_CODE.get(code);
+  if (!code) return;
+
+  // 2) Now safely store the selection
+  SELECTED_CODE = code;
+
+  // 3) Find the layer
+  const lyr = LAYER_BY_CODE.get(code);
   if (!lyr) return;
 
-  // Zoom to polygon
+  // 4) Zoom + open its tooltip
   map.fitBounds(lyr.getBounds(), { maxZoom: 11 });
+  try { if (lyr.getTooltip && lyr.getTooltip()) lyr.openTooltip(); } catch {}
 
-  // Open its tooltip if we have one
-  if (lyr.getTooltip && lyr.getTooltip()) {
-    try { lyr.openTooltip(); } catch {}
-  }
-
-  // Populate infoBox using latest ranks/deciles
-  const info = document.getElementById('infoBox');
-  const nmEl = document.getElementById('infoName');
-  const cdEl = document.getElementById('infoCode');
-  const rkEl = document.getElementById('infoRank');
-  const dcEl = document.getElementById('infoDecile');
-  if (info && nmEl && cdEl && rkEl && dcEl) {
-    const i = FILE9_INDEX.get(code);
-    const rk = Number.isInteger(i) ? LAST_RANKS[i]   : NaN;
-    const dc = Number.isInteger(i) ? LAST_DECILES[i] : NaN;
-    const n  = LAST_DECILES.length;
-
-    nmEl.textContent = FEATURE_META.get(code)?.name || code;
-    cdEl.textContent = code;
-    rkEl.textContent = Number.isFinite(rk) ? `${rk} / ${n}` : '—';
-    dcEl.textContent = Number.isFinite(dc) ? `${dc}` : '—';
-    info.style.display = 'block';
-  }
+  // 5) Refresh the side panel using latest ranks/deciles
+  refreshInfoBoxFromSelection();
 }
 
   
