@@ -106,7 +106,7 @@
     ["dom_living","Living Environment "],
   ];
 
-  // CSV column names for File 9 (you said: income, employ, educ, health, crime, barrier, living)
+  // CSV column names for File 9
   const DK_MAP = {
     dom_income: "income",
     dom_employment: "employ",
@@ -133,17 +133,16 @@
 
   // --- State
   let map, layer, areasFC = null, file9 = [];
-
   const weights = {...DEFAULT_WEIGHTS};
-// --- Selection / join globals
-let SELECTED_CODE = null;          // currently selected LSOA code (UPPERCASE)
-let selectedLayer = null;          // the Leaflet layer currently highlighted
-let LAYER_BY_CODE = new Map();     // code -> Leaflet layer (filled in draw())
-let FEATURE_META  = new Map();     // code -> {name} (kept fresh in updateAll())
-let FILE9_INDEX   = new Map();     // code -> index in file9[]
-let LAST_RANKS    = [];
-let LAST_DECILES  = [];
 
+  // Selection / join globals
+  let SELECTED_CODE = null;          // current LSOA (UPPERCASE)
+  let selectedLayer = null;          // current highlighted Leaflet layer
+  let LAYER_BY_CODE = new Map();     // code -> Leaflet layer
+  let FEATURE_META  = new Map();     // code -> {name}
+  let FILE9_INDEX   = new Map();     // code -> index in file9[]
+  let LAST_RANKS    = [];
+  let LAST_DECILES  = [];
 
   let legendVisible = JSON.parse(localStorage.getItem('legendVisible') ?? 'true');
 
@@ -160,28 +159,6 @@ let LAST_DECILES  = [];
     for (const f of out.features){ if (f.geometry?.coordinates){ f.geometry.coordinates = rp(f.geometry.coordinates); } }
     return out;
   }
-function refreshInfoBoxFromSelection(){
-  if (!SELECTED_CODE) return;
-  const code = SELECTED_CODE;
-  const info = document.getElementById('infoBox');
-  const nmEl = document.getElementById('infoName');
-  const cdEl = document.getElementById('infoCode');
-  const rkEl = document.getElementById('infoRank');
-  const dcEl = document.getElementById('infoDecile');
-  if (!info || !nmEl || !cdEl || !rkEl || !dcEl) return;
-
-  const i  = FILE9_INDEX.get(code);
-  const rk = (i != null) ? LAST_RANKS[i]   : NaN;
-  const dc = (i != null) ? LAST_DECILES[i] : NaN;
-  const n  = LAST_DECILES.length;
-
-  nmEl.textContent = FEATURE_META.get(code)?.name || code;
-  cdEl.textContent = code;
-  rkEl.textContent = Number.isFinite(rk) ? `${rk} / ${n}` : '—';
-  dcEl.textContent = Number.isFinite(dc) ? `${dc}` : '—';
-  info.style.display = 'block';
-}
-
   function normalizeWeights(w){
     const s = Object.values(w).reduce((a,b)=>a+(b||0),0) || 1;
     const o={}; for (const k in w) o[k]= (w[k]||0)/s; return o;
@@ -202,110 +179,85 @@ function refreshInfoBoxFromSelection(){
   }
   const cleanStr = v => String(v ?? "").replace(/^\uFEFF/, "").trim();
   const num = v => { const s = cleanStr(v).replace(/[\s,]/g,"").replace(/[−–—]/g,"-"); const x = +s; return Number.isFinite(x) ? x : NaN; };
-
   const normKey = s => String(s ?? "").trim().toUpperCase();
 
-function findMatches(query){
-  const q = normKey(query);
-  if (!q || q.length < 2) return [];
-
-  const out = [];
-
-  // 1) direct code match or contains
-  for (const [code, l] of LAYER_BY_CODE.entries()){
-    if (code.includes(q)) {
-      out.push({ code, name: FEATURE_META.get(code)?.name || code });
+  // Search helpers
+  function findMatches(query){
+    const q = normKey(query);
+    if (!q || q.length < 2) return [];
+    const out = [];
+    for (const [code] of LAYER_BY_CODE.entries()){
+      if (code.includes(q)) out.push({ code, name: FEATURE_META.get(code)?.name || code });
+    }
+    for (const [code, meta] of FEATURE_META.entries()){
+      const nameU = normKey(meta?.name || "");
+      if (nameU.includes(q) && !out.some(o => o.code === code)) out.push({ code, name: meta?.name || code });
+    }
+    out.sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+    return out.slice(0, 200);
+  }
+  function focusLayerSmart(lyr){
+    const b = lyr.getBounds();
+    const curZoom = map.getZoom();
+    const fitZoom = map.getBoundsZoom(b, true);
+    const MAX_ALLOWED = 11;
+    const desired = Math.min(fitZoom, MAX_ALLOWED);
+    if (desired > curZoom + 0.75) {
+      map.fitBounds(b, { padding: [24,24], maxZoom: MAX_ALLOWED });
+    } else {
+      map.panTo(b.getCenter());
     }
   }
-
-  // 2) name contains (case-insensitive). Avoid duplicating codes already added.
-  for (const [code, meta] of FEATURE_META.entries()){
-    const nameU = normKey(meta?.name || "");
-    if (nameU.includes(q) && !out.some(o => o.code === code)) {
-      out.push({ code, name: meta?.name || code });
-    }
-  }
-
-  // Sort: name then code for a tidy list
-  out.sort((a,b)=> (a.name||"").localeCompare(b.name||""));
-  return out.slice(0, 200); // safety cap
-}
-function focusLayerSmart(lyr){
-  const b = lyr.getBounds();
-  const curZoom = map.getZoom();
-  const fitZoom = map.getBoundsZoom(b, true); // snug fit level
-
-  // Cap how far we zoom in, and don't exceed a sensible upper bound (e.g. 11)
-  const MAX_ALLOWED = 11;                  // tweak if you like
-  const desired = Math.min(fitZoom, MAX_ALLOWED);
-
-  // Only zoom if we'd go in by at least ~0.75 levels; otherwise just pan to center
-  if (desired > curZoom + 0.75) {
-    map.fitBounds(b, { padding: [24,24], maxZoom: MAX_ALLOWED });
-  } else {
-    map.panTo(b.getCenter());
-  }
-}
-
-
-function showResults(matches){
-  const box = document.getElementById('searchResults');
-  if (!box) return;
-  if (!matches.length){
-    box.style.display = 'none';
-    box.innerHTML = '';
-    return;
-  }
-  box.style.display = 'block';
-  box.innerHTML = matches.map(m =>
-    `<button data-code="${m.code}" style="display:block;width:100%;text-align:left;background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin:4px 0;color:var(--text)">
-       <div style="font-weight:600">${m.name}</div>
-       <div style="font-size:12px;color:var(--muted)">${m.code}</div>
-     </button>`
-  ).join('');
-
-  // click handling
-  box.querySelectorAll('button[data-code]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      selectByCode(btn.getAttribute('data-code'));
-      // hide results after selection
-      box.style.display = 'none';
+  function showResults(matches){
+    const box = document.getElementById('searchResults');
+    if (!box) return;
+    if (!matches.length){ box.style.display='none'; box.innerHTML=''; return; }
+    box.style.display = 'block';
+    box.innerHTML = matches.map(m =>
+      `<button data-code="${m.code}" style="display:block;width:100%;text-align:left;background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin:4px 0;color:var(--text)">
+         <div style="font-weight:600">${m.name}</div>
+         <div style="font-size:12px;color:var(--muted)">${m.code}</div>
+       </button>`
+    ).join('');
+    box.querySelectorAll('button[data-code]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        selectByCode(btn.getAttribute('data-code'));
+        box.style.display = 'none';
+      });
     });
-  });
-}
-
-function selectByCode(codeRaw){
-  const code = String(codeRaw ?? "").trim().toUpperCase();
-  if (!code) return;
-
-  const lyr = LAYER_BY_CODE.get(code);
-  if (!lyr) {
-    console.warn("Code not found:", code);
-    return;
   }
-
-  // Clear previous highlight (if any)
-  if (selectedLayer) {
-    selectedLayer.setStyle({ weight: 1.1, color: '#9fb6e6' });
+  function refreshInfoBoxFromSelection(){
+    if (!SELECTED_CODE) return;
+    const code = SELECTED_CODE;
+    const info = document.getElementById('infoBox');
+    const nmEl = document.getElementById('infoName');
+    const cdEl = document.getElementById('infoCode');
+    const rkEl = document.getElementById('infoRank');
+    const dcEl = document.getElementById('infoDecile');
+    if (!info || !nmEl || !cdEl || !rkEl || !dcEl) return;
+    const i  = FILE9_INDEX.get(code);
+    const rk = (i != null) ? LAST_RANKS[i]   : NaN;
+    const dc = (i != null) ? LAST_DECILES[i] : NaN;
+    const n  = LAST_DECILES.length;
+    nmEl.textContent = FEATURE_META.get(code)?.name || code;
+    cdEl.textContent = code;
+    rkEl.textContent = Number.isFinite(rk) ? `${rk} / ${n}` : '—';
+    dcEl.textContent = Number.isFinite(dc) ? `${dc}` : '—';
+    info.style.display = 'block';
   }
-
-  // Apply new highlight
-  lyr.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
-  selectedLayer = lyr;
-
-  // Save selection for sidebar refresh + search
-  SELECTED_CODE = code;
-
-  // Focus sensibly
-  focusLayerSmart(lyr);
-
-  // Update info panel
-  refreshInfoBoxFromSelection();
-
-  // Try to open tooltip (non-fatal)
-  try { if (lyr.getTooltip && lyr.getTooltip()) lyr.openTooltip(); } catch {}
-}
-
+  function selectByCode(codeRaw){
+    const code = String(codeRaw ?? "").trim().toUpperCase();
+    if (!code) return;
+    const lyr = LAYER_BY_CODE.get(code);
+    if (!lyr) { console.warn("Code not found:", code); return; }
+    if (selectedLayer) selectedLayer.setStyle({ weight: 1.1, color: '#9fb6e6' });
+    lyr.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
+    selectedLayer = lyr;
+    SELECTED_CODE = code;
+    focusLayerSmart(lyr);
+    refreshInfoBoxFromSelection();
+    try { if (lyr.getTooltip && lyr.getTooltip()) lyr.openTooltip(); } catch {}
+  }
 
   // --- UI pieces
   const slidersDiv = document.getElementById('sliders');
@@ -318,46 +270,30 @@ function selectByCode(codeRaw){
       if (el) el.textContent = `${(norm[k] * 100).toFixed(1)}%`;
     });
   }
-
   function renderSliders(){
     slidersDiv.innerHTML = '';
     const norm = normalizeWeights(weights);
-
     DOMAIN_KEYS.forEach(([key, label]) => {
       const wrap = document.createElement('div');
       wrap.className = 'row';
-
       const top = document.createElement('label');
       const pct = ((norm[key] || 0) * 100).toFixed(1);
       top.innerHTML = `<span>${label}</span><span id="lab-${key}">${pct}%</span>`;
-
       const input = document.createElement('input');
-      input.type = 'range';
-      input.min = '0';
-      input.max = '40';
-      input.step = '0.1';
+      input.type = 'range'; input.min='0'; input.max='40'; input.step='0.1';
       input.value = String(weights[key]);
-
-      input.addEventListener('input', () => {
+      input.addEventListener('input', ()=>{
         weights[key] = Number(input.value);
-        refreshWeightLabels();  // update the percentage labels
-        updateAll();            // recolour the map
+        refreshWeightLabels();
+        updateAll();                  // recompute ranks/deciles + recolour
+        refreshInfoBoxFromSelection();// keep sidebar in sync
       });
-input.addEventListener('input', ()=>{
-  weights[key] = Number(input.value);
-  refreshWeightLabels();
-  updateAll();                  // already recomputes ranks/deciles
-  refreshInfoBoxFromSelection(); // ensure side panel reflects new ranks
-});
-
       wrap.appendChild(top);
       wrap.appendChild(input);
       slidersDiv.appendChild(wrap);
-
       normLabel[key] = top.querySelector('span:last-child');
     });
   }
-
   function updateLegend(){
     const el = document.getElementById('legend');
     let html = `<div style="font-weight:700;margin-bottom:6px">Deciles (1 = most deprived)</div>`;
@@ -371,206 +307,168 @@ input.addEventListener('input', ()=>{
     if (btn) btn.textContent = legendVisible ? 'Hide legend' : 'Show legend';
   }
 
+  // Draw polygons & wire per-feature events, also build LAYER_BY_CODE/META
   function draw(){
-  if(layer) { map.removeLayer(layer); layer=null; }
- LAYER_BY_CODE.clear();
-FEATURE_META.clear();
+    if(layer) { map.removeLayer(layer); layer=null; }
+    LAYER_BY_CODE.clear();
+    FEATURE_META.clear();
+    layer = L.geoJSON(areasFC, {
+      style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
+      onEachFeature: (f,l)=>{
+        const props = (f && f.properties) ? f.properties : {};
+        const code  = String((props[GEO_CODE_KEY] ?? f.id ?? "")).trim().toUpperCase();
+        const rawName = props[GEO_NAME_KEY];
+        const name = String(
+          (rawName !== undefined && rawName !== null && rawName !== "") ? rawName : (code || "Area")
+        );
+        if (code) {
+          LAYER_BY_CODE.set(code, l);
+          FEATURE_META.set(code, { name });
+        }
+        l.on({
+          mouseover:e=>{
+            e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 });
+          },
+          mouseout:e=>{
+            if (selectedLayer && e.target === selectedLayer) return;
+            e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillOpacity: 0.9 });
+          },
+          click:()=>{ if (code) selectByCode(code); }
+        });
+      }
+    }).addTo(map);
+    map.fitBounds(layer.getBounds(),{padding:[20,20]});
+  }
 
-layer = L.geoJSON(areasFC, {
-  style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
-  onEachFeature: (f,l)=>{
-    const props = (f && f.properties) ? f.properties : {};
-    const code  = String((props[GEO_CODE_KEY] ?? f.id ?? "")).trim().toUpperCase();
-    const rawName = props[GEO_NAME_KEY];
-    const name = String(
-      (rawName !== undefined && rawName !== null && rawName !== "") ? rawName : (code || "Area")
+  // Recompute, recolour, refresh tooltips & sidebar
+  function updateAll(){
+    if (!layer || !file9.length) return;
+
+    const normW = normalizeWeights(weights);
+    const scores = file9.map(r =>
+      (Number(r.income)  || 0) * normW.dom_income     +
+      (Number(r.employ)  || 0) * normW.dom_employment +
+      (Number(r.educ)    || 0) * normW.dom_education  +
+      (Number(r.health)  || 0) * normW.dom_health     +
+      (Number(r.crime)   || 0) * normW.dom_crime      +
+      (Number(r.barrier) || 0) * normW.dom_barriers   +
+      (Number(r.living)  || 0) * normW.dom_living
     );
 
-    if (code) {
-      LAYER_BY_CODE.set(code, l);
-      FEATURE_META.set(code, { name });
-    }
+    const rd = rankAndDeciles(scores);
+    LAST_RANKS   = rd.ranks;
+    LAST_DECILES = rd.deciles;
 
-    l.on({
-      mouseover:e=>{
-        e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 });
-      },
-      mouseout:e=>{
-        // don't reset style on the selected one
-        if (selectedLayer && e.target === selectedLayer) return;
-        e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillOpacity: 0.9 });
-      },
-      click:()=>{
-        const codeClick = code;
-        if (codeClick) selectByCode(codeClick);
+    FILE9_INDEX = new Map();
+    file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
+
+    const n = LAST_DECILES.length;
+    let matched = 0, total = 0;
+
+    layer.eachLayer(l=>{
+      total++;
+      const props = l.feature?.properties || {};
+      const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+      const name = String(
+        (props[GEO_NAME_KEY] !== undefined && props[GEO_NAME_KEY] !== null && props[GEO_NAME_KEY] !== "")
+          ? props[GEO_NAME_KEY] : (code || "Area")
+      );
+      const i   = FILE9_INDEX.get(code);
+      const dec = (i != null) ? LAST_DECILES[i] : NaN;
+      const rk  = (i != null) ? LAST_RANKS[i]   : NaN;
+
+      const fill = colorFor(dec);
+      l._currentFill = fill;
+      l.setStyle({ fillColor: fill });
+
+      if (SELECTED_CODE && code === SELECTED_CODE) {
+        selectedLayer = l;
+        l.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
       }
+
+      FEATURE_META.set(code, { name });
+
+      const tip = `
+        <div>
+          <strong>${name}</strong><br/>
+          <span style="opacity:.75">${code}</span><br/>
+          Rank: <strong>${Number.isFinite(rk) ? `${rk} / ${n}` : '—'}</strong><br/>
+          Decile: <strong>${Number.isFinite(dec) ? dec : '—'}</strong>
+        </div>`;
+      l.bindTooltip(tip, { sticky:true, opacity:0.95, className:'tooltip' });
+
+      if (Number.isFinite(dec)) matched++;
     });
+
+    console.log(`[JOIN] matched ${matched} of ${total}`);
+    refreshWeightLabels();
+    updateLegend();
+    refreshInfoBoxFromSelection();
   }
-}).addTo(map);
 
-  map.fitBounds(layer.getBounds(),{padding:[20,20]});
-}
+  // CSV export (baseline vs scenario)
+  function exportCSV(){
+    if (!file9?.length) return;
 
+    const baseW = normalizeWeights(DEFAULT_WEIGHTS);
+    const scenW = normalizeWeights(weights);
 
- function updateAll(){
-  // Safety: only proceed when we have data and a drawn layer
-  if (!layer || !Array.isArray(file9) || file9.length === 0) return;
+    const baseScores = file9.map(r =>
+      (Number(r.income)||0)*baseW.dom_income +
+      (Number(r.employ)||0)*baseW.dom_employment +
+      (Number(r.educ)||0)*baseW.dom_education +
+      (Number(r.health)||0)*baseW.dom_health +
+      (Number(r.crime)||0)*baseW.dom_crime +
+      (Number(r.barrier)||0)*baseW.dom_barriers +
+      (Number(r.living)||0)*baseW.dom_living
+    );
+    const scenScores = file9.map(r =>
+      (Number(r.income)||0)*scenW.dom_income +
+      (Number(r.employ)||0)*scenW.dom_employment +
+      (Number(r.educ)||0)*scenW.dom_education +
+      (Number(r.health)||0)*scenW.dom_health +
+      (Number(r.crime)||0)*scenW.dom_crime +
+      (Number(r.barrier)||0)*scenW.dom_barriers +
+      (Number(r.living)||0)*scenW.dom_living
+    );
 
-  // 1) Use LIVE weights to compute scores
-  const normW = normalizeWeights(weights);
+    const {ranks: baseRanks,  deciles: baseDeciles}  = rankAndDeciles(baseScores);
+    const {ranks: scenRanks,  deciles: scenDeciles}  = rankAndDeciles(scenScores);
 
-  const scores = file9.map(r =>
-    (Number(r.income)  || 0) * normW.dom_income     +
-    (Number(r.employ)  || 0) * normW.dom_employment +
-    (Number(r.educ)    || 0) * normW.dom_education  +
-    (Number(r.health)  || 0) * normW.dom_health     +
-    (Number(r.crime)   || 0) * normW.dom_crime      +
-    (Number(r.barrier) || 0) * normW.dom_barriers   +
-    (Number(r.living)  || 0) * normW.dom_living
-  );
+    const rows = file9.map((r, i) => ({
+      LSOA21CD: r.LSOA21CD,
+      base_score:  baseScores[i],
+      base_rank:   baseRanks[i],
+      base_decile: baseDeciles[i],
+      scen_score:  scenScores[i],
+      scen_rank:   scenRanks[i],
+      scen_decile: scenDeciles[i],
+      base_w_income:     (baseW.dom_income*100).toFixed(1),
+      base_w_employment: (baseW.dom_employment*100).toFixed(1),
+      base_w_education:  (baseW.dom_education*100).toFixed(1),
+      base_w_health:     (baseW.dom_health*100).toFixed(1),
+      base_w_crime:      (baseW.dom_crime*100).toFixed(1),
+      base_w_barriers:   (baseW.dom_barriers*100).toFixed(1),
+      base_w_living:     (baseW.dom_living*100).toFixed(1),
+      scen_w_income:     (scenW.dom_income*100).toFixed(1),
+      scen_w_employment: (scenW.dom_employment*100).toFixed(1),
+      scen_w_education:  (scenW.dom_education*100).toFixed(1),
+      scen_w_health:     (scenW.dom_health*100).toFixed(1),
+      scen_w_crime:      (scenW.dom_crime*100).toFixed(1),
+      scen_w_barriers:   (scenW.dom_barriers*100).toFixed(1),
+      scen_w_living:     (scenW.dom_living*100).toFixed(1),
+    }));
 
-  // 2) Ranks/deciles (write to globals used by search/info)
-  const rd = rankAndDeciles(scores);
-  LAST_RANKS   = rd.ranks;
-  LAST_DECILES = rd.deciles;
+    const cols = Object.keys(rows[0]);
+    const esc  = (s) => `"${String(s).replaceAll('"','""')}"`;
+    const csv  = [cols.map(esc).join(','), ...rows.map(r => cols.map(c => esc(r[c] ?? '')).join(','))].join('\n');
 
-  // 3) Index file9 by code (global so search can use it)
-  FILE9_INDEX = new Map();
-  file9.forEach((r,i)=> FILE9_INDEX.set(r.LSOA21CD, i));
-
-  // 4) Recolour polygons + refresh tooltips
-  const n = LAST_DECILES.length;
-  let matched = 0, total = 0;
-
-   let SELECTED_CODE = null;  // currently selected LSOA code (UPPERCASE)
-let selectedLayer = null;
-
-  layer.eachLayer(l=>{
-    total++;
-    const props = l.feature?.properties || {};
-    const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-  const name = String(
-  (props[GEO_NAME_KEY] !== undefined && props[GEO_NAME_KEY] !== null && props[GEO_NAME_KEY] !== "")
-    ? props[GEO_NAME_KEY]
-    : (code || "Area")
-);
-
-
-    const i   = FILE9_INDEX.get(code);
-    const dec = (i != null) ? LAST_DECILES[i] : NaN;
-    const rk  = (i != null) ? LAST_RANKS[i]   : NaN;
-
-    const fill = colorFor(dec);
-    l._currentFill = fill;
-    l.setStyle({ fillColor: fill });
-if (SELECTED_CODE && code === SELECTED_CODE) {
-  selectedLayer = l; // keep handle fresh after redraw
-  l.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
-}
-
-    // keep meta fresh for search panel
-    FEATURE_META.set(code, { name });
-
-    const tip = `
-      <div>
-        <strong>${name}</strong><br/>
-        <span style="opacity:.75">${code}</span><br/>
-        Rank: <strong>${Number.isFinite(rk) ? `${rk} / ${n}` : '—'}</strong><br/>
-        Decile: <strong>${Number.isFinite(dec) ? dec : '—'}</strong>
-      </div>`;
-    l.bindTooltip(tip, { sticky:true, opacity:0.95, className:'tooltip' });
-
-    if (Number.isFinite(dec)) matched++;
-  });
-
-  console.log(`[JOIN] matched ${matched} of ${total}`);
-  refreshWeightLabels();
-  updateLegend();
-   refreshInfoBoxFromSelection();
-}
-
-
- function exportCSV(){
-  if (!file9?.length) return;
-
-  // Normalise weights
-  const baseW = normalizeWeights(DEFAULT_WEIGHTS);
-  const scenW = normalizeWeights(weights);
-
-  // Compute scores
-  const baseScores = file9.map(r =>
-    (Number(r.income)||0)*baseW.dom_income +
-    (Number(r.employ)||0)*baseW.dom_employment +
-    (Number(r.educ)||0)*baseW.dom_education +
-    (Number(r.health)||0)*baseW.dom_health +
-    (Number(r.crime)||0)*baseW.dom_crime +
-    (Number(r.barrier)||0)*baseW.dom_barriers +
-    (Number(r.living)||0)*baseW.dom_living
-  );
-  const scenScores = file9.map(r =>
-    (Number(r.income)||0)*scenW.dom_income +
-    (Number(r.employ)||0)*scenW.dom_employment +
-    (Number(r.educ)||0)*scenW.dom_education +
-    (Number(r.health)||0)*scenW.dom_health +
-    (Number(r.crime)||0)*scenW.dom_crime +
-    (Number(r.barrier)||0)*scenW.dom_barriers +
-    (Number(r.living)||0)*scenW.dom_living
-  );
-
-  // Ranks & deciles
-  const {ranks: baseRanks,  deciles: baseDeciles}  = rankAndDeciles(baseScores);
-  const {ranks: scenRanks,  deciles: scenDeciles}  = rankAndDeciles(scenScores);
-
-  // Build rows
-  const rows = file9.map((r, i) => ({
-    LSOA21CD: r.LSOA21CD,
-
-    base_score:  baseScores[i],
-    base_rank:   baseRanks[i],
-    base_decile: baseDeciles[i],
-
-    scen_score:  scenScores[i],
-    scen_rank:   scenRanks[i],
-    scen_decile: scenDeciles[i],
-
-    // include weights used (percent) for transparency
-    base_w_income:     (baseW.dom_income*100).toFixed(1),
-    base_w_employment: (baseW.dom_employment*100).toFixed(1),
-    base_w_education:  (baseW.dom_education*100).toFixed(1),
-    base_w_health:     (baseW.dom_health*100).toFixed(1),
-    base_w_crime:      (baseW.dom_crime*100).toFixed(1),
-    base_w_barriers:   (baseW.dom_barriers*100).toFixed(1),
-    base_w_living:     (baseW.dom_living*100).toFixed(1),
-
-    scen_w_income:     (scenW.dom_income*100).toFixed(1),
-    scen_w_employment: (scenW.dom_employment*100).toFixed(1),
-    scen_w_education:  (scenW.dom_education*100).toFixed(1),
-    scen_w_health:     (scenW.dom_health*100).toFixed(1),
-    scen_w_crime:      (scenW.dom_crime*100).toFixed(1),
-    scen_w_barriers:   (scenW.dom_barriers*100).toFixed(1),
-    scen_w_living:     (scenW.dom_living*100).toFixed(1),
-  }));
-
-  // CSV
-  const cols = Object.keys(rows[0]);
-  const esc  = (s) => `"${String(s).replaceAll('"','""')}"`;
-  const csv  = [cols.map(esc).join(','), ...rows.map(r => cols.map(c => esc(r[c] ?? '')).join(','))].join('\n');
-
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = `imd_baseline_vs_scenario_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-
-    
-
-    const blob = new Blob([JSON.stringify(out)],{type:'application/geo+json'});
-    const url=URL.createObjectURL(blob); const a=document.createElement('a');
-    a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.geojson`; a.click();
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `imd_baseline_vs_scenario_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -590,40 +488,29 @@ if (SELECTED_CODE && code === SELECTED_CODE) {
       updateAll();
     });
     document.getElementById('exportCsv').addEventListener('click', exportCSV);
-   
+
+    // Search wiring
+    const searchBox = document.getElementById('searchBox');
+    const resultsEl = document.getElementById('searchResults');
+    if (searchBox) {
+      searchBox.addEventListener('input', ()=>{
+        const q = searchBox.value;
+        if (q.length < 2) { resultsEl.style.display='none'; resultsEl.innerHTML=''; return; }
+        const matches = findMatches(q);
+        if (matches.length === 1) { showResults(matches); selectByCode(matches[0].code); }
+        else { showResults(matches); }
+      });
+      searchBox.addEventListener('keydown', (e)=>{
+        if (e.key === 'Enter') {
+          const q = searchBox.value;
+          const matches = findMatches(q);
+          if (matches.length === 1) { selectByCode(matches[0].code); resultsEl.style.display='none'; }
+        }
+      });
+    }
+
     renderSliders();
     updateLegend();
-// Search wiring
-const searchBox = document.getElementById('searchBox');
-const resultsEl = document.getElementById('searchResults');
-
-if (searchBox) {
-  // live search as you type
-  searchBox.addEventListener('input', ()=>{
-    const q = searchBox.value;
-    if (q.length < 2) { resultsEl.style.display='none'; resultsEl.innerHTML=''; return; }
-    const matches = findMatches(q);
-    if (matches.length === 1) {
-      // single hit: zoom immediately but still show box content briefly
-      showResults(matches);
-      selectByCode(matches[0].code);
-    } else {
-      showResults(matches);
-    }
-  });
-
-  // Enter key: if multiple, keep list; if exact code, select
-  searchBox.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter') {
-      const q = searchBox.value;
-      const matches = findMatches(q);
-      if (matches.length === 1) {
-        selectByCode(matches[0].code);
-        resultsEl.style.display='none';
-      }
-    }
-  });
-}
 
     try {
       // GeoJSON
@@ -642,7 +529,6 @@ if (searchBox) {
         header: true, dynamicTyping: false, skipEmptyLines: true,
         delimiter: guessTab ? '\t' : ','
       });
-
       file9 = (parsed.data || []).map(r => ({
         LSOA21CD: String(r[CODE_COL] ?? "").trim().toUpperCase(),
         income:  num(r.income),
@@ -655,7 +541,6 @@ if (searchBox) {
       }));
       console.log("[FILE9] rows:", file9.length, "sample:", file9[0]);
 
-      // Optional: expose for console checks
       window.__areas = areasFC;
       window.__file9 = file9;
 
