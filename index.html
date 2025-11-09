@@ -153,6 +153,27 @@ let FILE9_INDEX = new Map();             // code -> index in file9[] (set in upd
     for (const f of out.features){ if (f.geometry?.coordinates){ f.geometry.coordinates = rp(f.geometry.coordinates); } }
     return out;
   }
+function refreshInfoBoxFromSelection(){
+  if (!SELECTED_CODE) return;
+  const code = SELECTED_CODE;
+  const info = document.getElementById('infoBox');
+  const nmEl = document.getElementById('infoName');
+  const cdEl = document.getElementById('infoCode');
+  const rkEl = document.getElementById('infoRank');
+  const dcEl = document.getElementById('infoDecile');
+  if (!info || !nmEl || !cdEl || !rkEl || !dcEl) return;
+
+  const i  = FILE9_INDEX.get(code);
+  const rk = (i != null) ? LAST_RANKS[i]   : NaN;
+  const dc = (i != null) ? LAST_DECILES[i] : NaN;
+  const n  = LAST_DECILES.length;
+
+  nmEl.textContent = FEATURE_META.get(code)?.name || code;
+  cdEl.textContent = code;
+  rkEl.textContent = Number.isFinite(rk) ? `${rk} / ${n}` : '—';
+  dcEl.textContent = Number.isFinite(dc) ? `${dc}` : '—';
+  info.style.display = 'block';
+}
 
   function normalizeWeights(w){
     const s = Object.values(w).reduce((a,b)=>a+(b||0),0) || 1;
@@ -230,6 +251,8 @@ function showResults(matches){
 }
 
 function selectByCode(codeRaw){
+SELECTED_CODE = code;   // remember selection
+
   const code = normKey(codeRaw);
   const lyr  = LAYER_BY_CODE.get(code);
   if (!lyr) return;
@@ -299,6 +322,12 @@ function selectByCode(codeRaw){
         refreshWeightLabels();  // update the percentage labels
         updateAll();            // recolour the map
       });
+input.addEventListener('input', ()=>{
+  weights[key] = Number(input.value);
+  refreshWeightLabels();
+  updateAll();                  // already recomputes ranks/deciles
+  refreshInfoBoxFromSelection(); // ensure side panel reflects new ranks
+});
 
       wrap.appendChild(top);
       wrap.appendChild(input);
@@ -352,7 +381,12 @@ function selectByCode(codeRaw){
   l.on({
     mouseover: e => { e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 }); },
     mouseout:  e => { e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillColor: e.target._currentFill, fillOpacity: 0.9 }); },
-    click:     () => map.fitBounds(l.getBounds(), { maxZoom: 11 })
+   click: () => {
+  const props = (f && f.properties) ? f.properties : {};
+  const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+  if (code) selectByCode(code);          // reuse the same path as the search
+}
+
   });
 }     
   }).addTo(map);
@@ -391,6 +425,8 @@ function selectByCode(codeRaw){
   const n = LAST_DECILES.length;
   let matched = 0, total = 0;
 
+   let SELECTED_CODE = null;  // currently selected LSOA code (UPPERCASE)
+
   layer.eachLayer(l=>{
     total++;
     const props = l.feature?.properties || {};
@@ -428,6 +464,7 @@ function selectByCode(codeRaw){
   console.log(`[JOIN] matched ${matched} of ${total}`);
   refreshWeightLabels();
   updateLegend();
+   refreshInfoBoxFromSelection();
 }
 
 
