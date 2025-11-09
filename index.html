@@ -135,14 +135,17 @@
   let map, layer, areasFC = null, file9 = [];
 
   const weights = {...DEFAULT_WEIGHTS};
-  let SELECTED_CODE = null;      // currently selected area
-let FILE9_INDEX   = new Map(); // built in updateAll()
-let FEATURE_META  = new Map(); // stores name lookup for tooltips/search
+// --- Selection / join globals
+let SELECTED_CODE = null;          // currently selected LSOA code (UPPERCASE)
+let selectedLayer = null;          // the Leaflet layer currently highlighted
+let LAYER_BY_CODE = new Map();     // code -> Leaflet layer (filled in draw())
+let FEATURE_META  = new Map();     // code -> {name} (kept fresh in updateAll())
+let FILE9_INDEX   = new Map();     // code -> index in file9[]
 let LAST_RANKS    = [];
 let LAST_DECILES  = [];
 
+
   let legendVisible = JSON.parse(localStorage.getItem('legendVisible') ?? 'true');
-const LAYER_BY_CODE = new Map();       // code -> Leaflet layer
 
   // --- Helpers
   const firstXY = (c)=>{ if(!c) return null; if (typeof c[0]==='number') return c; for(const d of c){ const v=firstXY(d); if(v) return v; } return null; };
@@ -273,40 +276,35 @@ function showResults(matches){
 
 function selectByCode(codeRaw){
   const code = String(codeRaw ?? "").trim().toUpperCase();
-  if (!layer || !code) return;
+  if (!code) return;
 
-  let found = null;
-
-  layer.eachLayer(l=>{
-    const props = l.feature?.properties || {};
-    const lyrCode = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-    if (lyrCode === code) found = l;
-  });
-
-  if (!found) {
+  const lyr = LAYER_BY_CODE.get(code);
+  if (!lyr) {
     console.warn("Code not found:", code);
     return;
   }
 
-  // 🔹 Clear previous selection
+  // Clear previous highlight (if any)
   if (selectedLayer) {
     selectedLayer.setStyle({ weight: 1.1, color: '#9fb6e6' });
   }
 
-  // 🔹 Apply new highlight
-  found.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
-  selectedLayer = found;
+  // Apply new highlight
+  lyr.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
+  selectedLayer = lyr;
 
-  // 🔹 Focus map intelligently
-  focusLayerSmart(found);
+  // Save selection for sidebar refresh + search
+  SELECTED_CODE = code;
 
-  // 🔹 Update info box / tooltip
-  const props = found.feature?.properties || {};
-  const codeVal = props[GEO_CODE_KEY] || "";
-  SELECTED_CODE = codeVal;
+  // Focus sensibly
+  focusLayerSmart(lyr);
+
+  // Update info panel
   refreshInfoBoxFromSelection();
-}
 
+  // Try to open tooltip (non-fatal)
+  try { if (lyr.getTooltip && lyr.getTooltip()) lyr.openTooltip(); } catch {}
+}
 
   
   // --- UI pieces
@@ -375,53 +373,40 @@ input.addEventListener('input', ()=>{
 
   function draw(){
   if(layer) { map.removeLayer(layer); layer=null; }
-  LAYER_BY_CODE.clear();
-  FEATURE_META.clear();
+ LAYER_BY_CODE.clear();
+FEATURE_META.clear();
 
-  layer = L.geoJSON(areasFC, {
-    style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
-  onEachFeature: (f, l) => {
-  const props = (f && f.properties) ? f.properties : {};
+layer = L.geoJSON(areasFC, {
+  style: ()=>({color:'#9fb6e6',weight:1.1,fillColor:NO_DATA_FILL,fillOpacity:0.9}),
+  onEachFeature: (f,l)=>{
+    const props = (f && f.properties) ? f.properties : {};
+    const code  = String((props[GEO_CODE_KEY] ?? f.id ?? "")).trim().toUpperCase();
+    const rawName = props[GEO_NAME_KEY];
+    const name = String(
+      (rawName !== undefined && rawName !== null && rawName !== "") ? rawName : (code || "Area")
+    );
 
-  const code = String(
-    (props[GEO_CODE_KEY] !== undefined && props[GEO_CODE_KEY] !== null)
-      ? props[GEO_CODE_KEY]
-      : (f.id ?? "")
-  ).trim().toUpperCase();
+    if (code) {
+      LAYER_BY_CODE.set(code, l);
+      FEATURE_META.set(code, { name });
+    }
 
-  const rawName = props[GEO_NAME_KEY];
-  const name = String(
-    (rawName !== undefined && rawName !== null && rawName !== "")
-      ? rawName
-      : (code || "Area")
-  );
-
-  if (code) {
-    LAYER_BY_CODE.set(code, l);
-    FEATURE_META.set(code, { name });
+    l.on({
+      mouseover:e=>{
+        e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 });
+      },
+      mouseout:e=>{
+        // don't reset style on the selected one
+        if (selectedLayer && e.target === selectedLayer) return;
+        e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillOpacity: 0.9 });
+      },
+      click:()=>{
+        const codeClick = code;
+        if (codeClick) selectByCode(codeClick);
+      }
+    });
   }
-
-l.on({
-  mouseover: e => {
-    e.target.setStyle({ weight: 2, color: '#fff', fillOpacity: 1 });
-  },
-  mouseout: e => {
-    // Don't reset style if it's the selected one
-    if (e.target === selectedLayer) return;
-    e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillOpacity: 0.9 });
-  },
-  click: () => {
-    const props = f.properties || {};
-    const code = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-    if (code) selectByCode(code);
-  }
-
-
-
-
-  });
-}     
-  }).addTo(map);
+}).addTo(map);
 
   map.fitBounds(layer.getBounds(),{padding:[20,20]});
 }
@@ -478,6 +463,10 @@ let selectedLayer = null;
     const fill = colorFor(dec);
     l._currentFill = fill;
     l.setStyle({ fillColor: fill });
+if (SELECTED_CODE && code === SELECTED_CODE) {
+  selectedLayer = l; // keep handle fresh after redraw
+  l.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
+}
 
     // keep meta fresh for search panel
     FEATURE_META.set(code, { name });
