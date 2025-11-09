@@ -490,28 +490,80 @@ if (SELECTED_CODE && code === SELECTED_CODE) {
 }
 
 
-  function exportCSV(){
-    if(!file9?.length) return;
-    const normW = normalizeWeights(weights); // export with current weights
-    const scores = file9.map(r=>weightedScore(r,normW));
-    const {ranks,deciles} = rankAndDeciles(scores);
+ function exportCSV(){
+  if (!file9?.length) return;
 
-    const rows = file9.map((r,i)=> ({
-      LSOA21CD: r.LSOA21CD,
-      score: scores[i],
-      rank: ranks[i],
-      decile: deciles[i]
-    }));
+  // Normalise weights
+  const baseW = normalizeWeights(DEFAULT_WEIGHTS);
+  const scenW = normalizeWeights(weights);
 
-    const cols=['LSOA21CD','score','rank','decile'];
-    const esc=s=>`"${String(s).replaceAll('"','""')}"`;
-    const csv=[cols.map(esc).join(','), ...rows.map(r=>cols.map(c=>esc(r[c])).join(','))].join('\n');
+  // Compute scores
+  const baseScores = file9.map(r =>
+    (Number(r.income)||0)*baseW.dom_income +
+    (Number(r.employ)||0)*baseW.dom_employment +
+    (Number(r.educ)||0)*baseW.dom_education +
+    (Number(r.health)||0)*baseW.dom_health +
+    (Number(r.crime)||0)*baseW.dom_crime +
+    (Number(r.barrier)||0)*baseW.dom_barriers +
+    (Number(r.living)||0)*baseW.dom_living
+  );
+  const scenScores = file9.map(r =>
+    (Number(r.income)||0)*scenW.dom_income +
+    (Number(r.employ)||0)*scenW.dom_employment +
+    (Number(r.educ)||0)*scenW.dom_education +
+    (Number(r.health)||0)*scenW.dom_health +
+    (Number(r.crime)||0)*scenW.dom_crime +
+    (Number(r.barrier)||0)*scenW.dom_barriers +
+    (Number(r.living)||0)*scenW.dom_living
+  );
 
-    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a'); a.href=url; a.download=`imd_bespoke_${new Date().toISOString().slice(0,10)}.csv`; a.click();
-    URL.revokeObjectURL(url);
-  }
+  // Ranks & deciles
+  const {ranks: baseRanks,  deciles: baseDeciles}  = rankAndDeciles(baseScores);
+  const {ranks: scenRanks,  deciles: scenDeciles}  = rankAndDeciles(scenScores);
+
+  // Build rows
+  const rows = file9.map((r, i) => ({
+    LSOA21CD: r.LSOA21CD,
+
+    base_score:  baseScores[i],
+    base_rank:   baseRanks[i],
+    base_decile: baseDeciles[i],
+
+    scen_score:  scenScores[i],
+    scen_rank:   scenRanks[i],
+    scen_decile: scenDeciles[i],
+
+    // include weights used (percent) for transparency
+    base_w_income:     (baseW.dom_income*100).toFixed(1),
+    base_w_employment: (baseW.dom_employment*100).toFixed(1),
+    base_w_education:  (baseW.dom_education*100).toFixed(1),
+    base_w_health:     (baseW.dom_health*100).toFixed(1),
+    base_w_crime:      (baseW.dom_crime*100).toFixed(1),
+    base_w_barriers:   (baseW.dom_barriers*100).toFixed(1),
+    base_w_living:     (baseW.dom_living*100).toFixed(1),
+
+    scen_w_income:     (scenW.dom_income*100).toFixed(1),
+    scen_w_employment: (scenW.dom_employment*100).toFixed(1),
+    scen_w_education:  (scenW.dom_education*100).toFixed(1),
+    scen_w_health:     (scenW.dom_health*100).toFixed(1),
+    scen_w_crime:      (scenW.dom_crime*100).toFixed(1),
+    scen_w_barriers:   (scenW.dom_barriers*100).toFixed(1),
+    scen_w_living:     (scenW.dom_living*100).toFixed(1),
+  }));
+
+  // CSV
+  const cols = Object.keys(rows[0]);
+  const esc  = (s) => `"${String(s).replaceAll('"','""')}"`;
+  const csv  = [cols.map(esc).join(','), ...rows.map(r => cols.map(c => esc(r[c] ?? '')).join(','))].join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `imd_baseline_vs_scenario_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
   function exportGeo(){
     if(!areasFC||!file9?.length) return;
