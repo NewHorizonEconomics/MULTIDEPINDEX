@@ -72,10 +72,10 @@
 
     <div id="sliders"></div>
 
-    <div class="group btns">
-      <button id="reset">Reset weights</button>
-      <button id="exportCsv" class="outline">Export CSV</button>
-      <button id="exportGeo" class="outline">Export GeoJSON</button>
+   <div class="group btns">
+     <button id="reset">Reset weights</button>
+     <button id="exportCsv" class="outline">Export CSV</button>
+  //    <button id="exportGeo" class="outline">Export GeoJSON</button>
     </div>
 
     <div class="group" style="font-size:12px;color:var(--muted)">
@@ -565,29 +565,29 @@ if (SELECTED_CODE && code === SELECTED_CODE) {
   URL.revokeObjectURL(url);
 }
 
-  function exportGeo(){
-    if(!areasFC||!file9?.length) return;
-    const normW = normalizeWeights(weights);
-    const scores = file9.map(r=>weightedScore(r,normW));
-    const {ranks,deciles} = rankAndDeciles(scores);
+//  function exportGeo(){
+ //   if(!areasFC||!file9?.length) return;
+  //  const normW = normalizeWeights(weights);
+ //   const scores = file9.map(r=>weightedScore(r,normW));
+ //   const {ranks,deciles} = rankAndDeciles(scores);
 
-    const idx=new Map(); file9.forEach((r,i)=> idx.set(r.LSOA21CD,i));
+ //   const idx=new Map(); file9.forEach((r,i)=> idx.set(r.LSOA21CD,i));
 
-    const out = {
-      type:'FeatureCollection',
-      features: areasFC.features.map(ft=>{
-        const code = String(ft.properties?.LSOA21CD ?? ft.id ?? '').trim().toUpperCase();
-        const i = idx.get(code);
-        return {
-          ...ft,
-          properties:{
-            ...ft.properties,
-            _score:  (i!=null? scores[i]   : null),
-            _rank:   (i!=null? ranks[i]    : null),
-            _decile: (i!=null? deciles[i]  : null)
-          }
-        };
-      })
+  //  const out = {
+   //   type:'FeatureCollection',
+    //  features: areasFC.features.map(ft=>{
+    //    const code = String(ft.properties?.LSOA21CD ?? ft.id ?? '').trim().toUpperCase();
+   //     const i = idx.get(code);
+   //     return {
+   //       ...ft,
+     //     properties:{
+       //     ...ft.properties,
+      //      _score:  (i!=null? scores[i]   : null),
+        //    _rank:   (i!=null? ranks[i]    : null),
+       //     _decile: (i!=null? deciles[i]  : null)
+     //     }
+     //   };
+     // })
     };
 
     const blob = new Blob([JSON.stringify(out)],{type:'application/geo+json'});
@@ -612,7 +612,7 @@ if (SELECTED_CODE && code === SELECTED_CODE) {
       updateAll();
     });
     document.getElementById('exportCsv').addEventListener('click', exportCSV);
-    document.getElementById('exportGeo').addEventListener('click', exportGeo);
+    // document.getElementById('exportGeo').addEventListener('click', exportGeo);
 
     renderSliders();
     updateLegend();
