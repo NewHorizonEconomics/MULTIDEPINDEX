@@ -384,7 +384,14 @@ input.addEventListener('input', ()=>{
   l.on({
     mouseover: e => { e.target.setStyle({ weight: 2, color: '#fff', fillColor: e.target._currentFill, fillOpacity: 1 }); },
     mouseout:  e => { e.target.setStyle({ weight: 1.1, color: '#9fb6e6', fillColor: e.target._currentFill, fillOpacity: 0.9 }); },
-  focusLayerSmart(lyr);
+ l.on({
+  click: () => {
+    const props = (f && f.properties) ? f.properties : {};
+    const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
+    if (code) selectByCode(code);   // selectByCode -> focusLayerSmart(l) internally
+  }
+});
+
 
 
   });
