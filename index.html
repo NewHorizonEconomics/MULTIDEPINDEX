@@ -290,12 +290,7 @@ function selectByCode(codeRaw){
   }
 
   // Apply new highlight
- found.setStyle({
-  weight: 4,
-  color: '#fffa90',
-  dashArray: '4,2'
-});
-
+  lyr.setStyle({ weight: 3, color: '#fff', dashArray: '2,3' });
   selectedLayer = lyr;
 
   // Save selection for sidebar refresh + search
@@ -311,7 +306,6 @@ function selectByCode(codeRaw){
   try { if (lyr.getTooltip && lyr.getTooltip()) lyr.openTooltip(); } catch {}
 }
 
-  
   // --- UI pieces
   const slidersDiv = document.getElementById('sliders');
   const normLabel = {}; // key -> span element
