@@ -397,10 +397,9 @@ const n = LAST_DECILES.length; // for tooltips
       total++;
       const props = l.feature?.properties || {};
       const code  = String(props[GEO_CODE_KEY] ?? "").trim().toUpperCase();
-      const i     = idx.get(code);
-      const dec   = (i!=null) ? deciles[i] : NaN;
-      const rk    = (i!=null) ? ranks[i]   : NaN;
-      const n     = deciles.length;
+    const i   = FILE9_INDEX.get(code);
+const dec = (i!=null) ? LAST_DECILES[i] : NaN;
+const rk  = (i!=null) ? LAST_RANKS[i]   : NaN;
 
       const fill = colorFor(dec);
       l._currentFill = fill;
