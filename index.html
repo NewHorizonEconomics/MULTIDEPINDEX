@@ -127,16 +127,13 @@ header h1 {
   display: none;
 }
 
-/* Show the hint on mobile only */
+/* Mobile only: show it, but let it scroll away naturally */
 @media (max-width: 900px) {
-  aside {
-    position: relative;
-  }
   .scroll-hint {
     display: block;
-    position: sticky;   /* stays at top of the scrolling aside */
-    top: 0;
-    z-index: 2;
+    /* normal document flow: NOT sticky, NOT fixed */
+    position: static;
+
     background: rgba(15, 20, 36, 0.95);
     border: 1px solid var(--border);
     color: var(--muted);
@@ -147,7 +144,6 @@ header h1 {
     border-radius: 10px;
   }
 }
-
   </style>
 </head>
 <body>
