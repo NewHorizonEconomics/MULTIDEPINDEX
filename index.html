@@ -122,6 +122,31 @@ header h1 {
   aside.scrolled::before   { display: block; }
   aside.hint-hidden .scroll-hint { display: none; }
 }
+/* Hide the hint by default (desktop/tablet) */
+.scroll-hint {
+  display: none;
+}
+
+/* Show the hint on mobile only */
+@media (max-width: 900px) {
+  aside {
+    position: relative;
+  }
+  .scroll-hint {
+    display: block;
+    position: sticky;   /* stays at top of the scrolling aside */
+    top: 0;
+    z-index: 2;
+    background: rgba(15, 20, 36, 0.95);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    padding: 6px 10px;
+    margin: 0 0 8px 0;
+    border-radius: 10px;
+  }
+}
 
   </style>
 </head>
@@ -644,24 +669,6 @@ header h1 {
       alert('Failed to load map/data. See console.');
     }
   });
-  // Mobile scroll hint: hide after first real scroll and remember preference
-const asideEl = document.querySelector('aside');
-if (asideEl) {
-  const hideHint = () => asideEl.classList.add('hint-hidden');
-  if (localStorage.getItem('asideHintHidden') === '1') hideHint();
-
-  asideEl.addEventListener('scroll', () => {
-    if (asideEl.scrollTop > 8) {
-      asideEl.classList.add('scrolled');
-      if (!asideEl.classList.contains('hint-hidden')) {
-        hideHint();
-        localStorage.setItem('asideHintHidden', '1');
-      }
-    } else {
-      asideEl.classList.remove('scrolled');
-    }
-  }, { passive: true });
-}
 
 })();
 </script>
