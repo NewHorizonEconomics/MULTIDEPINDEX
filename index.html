@@ -82,7 +82,59 @@ header h1 {
     </div>
   </div>
 </header>
+  /* Mobile: make the top band clearly scrollable */
+@media (max-width: 900px) {
+  aside {
+    position: relative;
+    max-height: 38vh;          /* visible but not overwhelming */
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 22px;      /* room for the hint fade */
+  }
 
+  /* Fading masks to hint there’s more content */
+  aside::before,
+  aside::after {
+    content: "";
+    position: sticky;
+    left: 0; right: 0;
+    height: 18px;
+    pointer-events: none;
+    z-index: 2;
+  }
+  /* top fade (appears when scrolled down) */
+  aside::before {
+    top: 0;
+    background: linear-gradient(to bottom, var(--panel), transparent);
+    display: none;
+  }
+  /* bottom fade + subtle “scroll” cue */
+  aside::after {
+    bottom: 0;
+    background:
+      linear-gradient(to top, var(--panel), transparent),
+      radial-gradient(circle at 50% 85%, rgba(255,255,255,0.15) 0 6px, transparent 7px);
+  }
+
+  /* Tiny text hint over the bottom fade (first load only) */
+  aside .scroll-hint {
+    position: sticky;
+    bottom: 4px;
+    width: 100%;
+    text-align: center;
+    font-size: 10px;
+    color: var(--muted);
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  /* When user has scrolled a bit, hide bottom hint and show top fade */
+  aside.scrolled::after,
+  aside.hint-hidden::after { background: linear-gradient(to top, var(--panel), transparent); }
+  aside.scrolled::before   { display: block; }
+  aside.hint-hidden .scroll-hint { display: none; }
+}
   <aside>
     <div class="group">
       <div class="row-inline">
@@ -90,7 +142,8 @@ header h1 {
         <button id="legendToggle" class="outline" style="flex:1">Hide legend</button>
       </div>
     </div>
-<div class="group">
+<div class="scroll-hint">Scroll for more ▼</div>
+    <div class="group">
   <label>Search by name or code</label>
   <input id="searchBox" type="text" placeholder="e.g. E01000001 or Plymouth" />
   <div id="searchResults" class="row" style="display:none; max-height:180px; overflow:auto; margin-top:8px;"></div>
@@ -125,6 +178,8 @@ header h1 {
     <div id="legend" class="legend"></div>
   </main>
 </div>
+
+
 
 <script defer>
 (function(){
@@ -588,6 +643,25 @@ header h1 {
       alert('Failed to load map/data. See console.');
     }
   });
+  // Mobile scroll hint: hide after first real scroll and remember preference
+const asideEl = document.querySelector('aside');
+if (asideEl) {
+  const hideHint = () => asideEl.classList.add('hint-hidden');
+  if (localStorage.getItem('asideHintHidden') === '1') hideHint();
+
+  asideEl.addEventListener('scroll', () => {
+    if (asideEl.scrollTop > 8) {
+      asideEl.classList.add('scrolled');
+      if (!asideEl.classList.contains('hint-hidden')) {
+        hideHint();
+        localStorage.setItem('asideHintHidden', '1');
+      }
+    } else {
+      asideEl.classList.remove('scrolled');
+    }
+  }, { passive: true });
+}
+
 })();
 </script>
 
