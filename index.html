@@ -53,6 +53,27 @@ header h1 {
   object-fit: cover;
   border: 2px solid rgba(255,255,255,.08);
 }
+.scroll-hint {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: linear-gradient(to bottom, rgba(11,15,25,0.95) 80%, rgba(11,15,25,0));
+  text-align: center;
+  font-weight: 800;            /* BOLD */
+  font-size: 13px;
+  letter-spacing: 0.6px;
+  color: #ffcb66;              /* gold accent – matches your brand palette */
+  padding: 6px 0 4px;
+  text-shadow: 0 0 6px rgba(255, 203, 102, 0.5); /* subtle glow for visibility */
+  pointer-events: none;        /* avoids blocking scroll */
+}
+@keyframes pulse {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.scroll-hint {
+  animation: pulse 2s infinite;
+}
 
     aside{border-right:1px solid var(--border);background:var(--panel);padding:14px;overflow:auto}
     main{position:relative}
@@ -164,7 +185,7 @@ header h1 {
         <button id="legendToggle" class="outline" style="flex:1">Hide legend</button>
       </div>
     </div>
-<div class="scroll-hint">Scroll for more ▼</div>
+<div class="scroll-hint">SCROLL FOR MORE ▼</div>
     <div class="group">
   <label>Search by name or code</label>
   <input id="searchBox" type="text" placeholder="e.g. E01000001 or Plymouth" />
